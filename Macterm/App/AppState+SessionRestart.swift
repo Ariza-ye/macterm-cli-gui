@@ -91,7 +91,7 @@ extension AppState {
         ModelWriter.paneReplace(tab, replacements)
         logger.info("restarting \(olds.count, privacy: .public) older session(s)")
         for old in olds {
-            old.destroySurface()
+            SurfaceRegistry.shared.destroySurfaces(of: old)
             outdatedSessions.remove(old.sessionName)
         }
         for name in Set(olds.map(\.sessionName)) {
