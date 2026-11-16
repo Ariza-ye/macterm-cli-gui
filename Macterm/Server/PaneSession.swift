@@ -259,8 +259,15 @@ final class PaneSession: PaneInputRoute, @unchecked Sendable {
                 // A channel that ends at once counts as a failed try, so a
                 // server that drops each channel does not make a tight loop.
                 if Date().timeIntervalSince(started) < 2 { tries += 1 }
+                if !reconnects {
+                    // The session does not connect again (a remote pane), so
+                    // it reports the end of the channel here: no `lead`.
+                    uninstall()
+                    host.paneLead(nil)
+                    host.paneLinkLost()
+                    return
+                }
                 host.paneLinkLost()
-                if !reconnects { return }
             } catch is CancellationError {
                 return
             } catch let ProtocolControlError.errorResponse(info) where info.errorCode == .notFound && !firstAttach {
