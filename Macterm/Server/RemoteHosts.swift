@@ -321,6 +321,120 @@ final class RemoteHosts {
         }
     }
 
+    /// The answer of `checkFolder`.
+    enum FolderCheck: Equatable {
+        case exists
+        case missing
+        /// No connection, or the check did not run to its end.
+        case unreachable
+    }
+
+    /// Whether `directory` is on the host, before a remote project for it is
+    /// added (0358). A host with a link: its server runs
+    /// `HostCommands.folderCheckScript` (`command.run`). Any other host: the
+    /// same script runs over the ssh connection first, so the login may ask,
+    /// and a missing folder is told before the install question (0384). Then,
+    /// for a folder that is there, the host connects as a new pane does: the
+    /// server install may ask, and the connection stays for the project's
+    /// panes. Fail closed: anything other than the script's own answer is
+    /// `unreachable`, and the log says why.
+    func checkFolder(_ directory: String, destination: String) async -> FolderCheck {
+        guard SSHConnections.isValidDestination(destination) else {
+            logger.info("folder check: \(destination, privacy: .public) is not a valid host")
+            return .unreachable
+        }
+        if case let .ready(link) = hosts[destination], let answer = await checkFolder(directory, destination: destination, over: link) {
+            return answer
+        }
+        guard let command = HostCommands.folderCheckCommand(directory: directory) else {
+            logger.info("folder check: \(destination, privacy: .public): the folder is too long")
+            return .unreachable
+        }
+        let found: FolderCheck
+        do {
+            let outcome = try await connections.run(destination, command, timeout: .seconds(20))
+            found = answer(status: outcome.status, destination: destination)
+        } catch {
+            logger.info("folder check: \(destination, privacy: .public): \(String(describing: error), privacy: .public)")
+            return .unreachable
+        }
+        guard found == .exists else { return found }
+        // A dialog that closed adds nothing: no install question for it.
+        guard !Task.isCancelled else { return .unreachable }
+        switch hosts[destination] {
+        case nil:
+            prepare(destination, prompts: true)
+        case let .preparing(_, _, asks) where !asks:
+            prepare(destination, prompts: true)
+        default:
+            break
+        }
+        // Another step (an install from Settings) can replace this prepare:
+        // wait for the one that is current.
+        while case let .preparing(_, task, _) = hosts[destination] {
+            await task.value
+        }
+        switch hosts[destination] {
+        case .ready,
+             .plain:
+            return .exists
+        case .preparing,
+             nil:
+            // `prepare` logged the reason.
+            logger.info("folder check: \(destination, privacy: .public): no connection after the check")
+            return .unreachable
+        }
+    }
+
+    /// The check by the host's server. nil when the link closed: it is
+    /// dropped, and the check goes over ssh.
+    private func checkFolder(_ directory: String, destination: String, over link: RemoteServers.Link) async -> FolderCheck? {
+        // 8 s: the request itself gives up at 10 s (`LocalSessions.bounded`).
+        let argv = HostCommands.folderCheckArgv(directory: directory)
+        if let result = await Self.run(argv, timeout: .seconds(8), over: link) {
+            return answer(status: result.signal == nil ? result.code.map(Int32.init) : nil, destination: destination)
+        }
+        // Only a closed connection is dropped: a slow folder (a network
+        // mount) on a good link must not end its panes.
+        guard !link.connection.isOpen else {
+            logger.info("folder check: \(destination, privacy: .public): the server did not answer")
+            return .unreachable
+        }
+        if case let .ready(current) = hosts[destination], current === link { drop(destination) }
+        return nil
+    }
+
+    /// `checkFolder` for the scp-style path of a new remote project in the
+    /// GUI (the sheet, the palette): nil when the folder is there, else the
+    /// line that says why nothing is added.
+    func refusal(forNewProjectPath path: String) async -> String? {
+        guard case let .remote(user, host, directory) = ProjectPath.parse(path) else { return nil }
+        let destination = HostCommands.destination(user: user, host: host)
+        switch await checkFolder(directory, destination: destination) {
+        case .exists: return nil
+        case .missing: return String(localized: "There is no path \(directory) on \(destination).")
+        case .unreachable: return String(localized: "Macterm cannot connect to \(destination).")
+        }
+    }
+
+    /// The answer for the exit status of the folder check. Pure.
+    nonisolated static func folderCheck(status: Int32?) -> FolderCheck {
+        switch status {
+        case 0: .exists
+        case 3: .missing
+        default: .unreachable
+        }
+    }
+
+    private func answer(status: Int32?, destination: String) -> FolderCheck {
+        let answer = Self.folderCheck(status: status)
+        if answer == .unreachable {
+            let end = status.map(String.init) ?? "a signal"
+            logger.info("folder check: \(destination, privacy: .public): the check ended with \(end, privacy: .public)")
+        }
+        return answer
+    }
+
     /// Install the server on a host where the user declined it, after the
     /// user's click. New panes then get sessions; a plain shell stays plain.
     /// A second decline keeps the host plain, so its sidebar mark stays.

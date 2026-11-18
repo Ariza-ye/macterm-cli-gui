@@ -459,6 +459,63 @@ struct RemoteHostsTests {
         }
     }
 
+    // MARK: - The folder check of a new project (0358)
+
+    @Test(.enabled(if: LocalSSHD.isAvailable), .timeLimit(.minutes(3)))
+    func a_new_project_finds_its_folder_over_ssh_then_on_the_hosts_server_and_the_login_stays_for_its_panes() async throws {
+        try await withSSHDHost { host in
+            let fixture = Fixture(host)
+            #expect(await fixture.hosts.checkFolder(fixture.directory, destination: "box") == .exists)
+            #expect(await fixture.hosts.checkFolder("~", destination: "box") == .exists)
+            #expect(await fixture.hosts.checkFolder("~/none-\(UUID().uuidString)", destination: "box") == .missing)
+            #expect(fixture.ready == ["box"])
+            // The project's first pane uses the same login.
+            _ = try await fixture.attach(fixture.pane())
+            #expect(host.sshd.acceptedLogins() == 1)
+        }
+    }
+
+    @Test(.enabled(if: LocalSSHD.isAvailable), .timeLimit(.minutes(3)))
+    func a_new_project_finds_its_folder_over_ssh_when_the_host_has_no_server() async throws {
+        try await withSSHDHost(answer: false) { host in
+            let fixture = Fixture(host)
+            #expect(await fixture.hosts.checkFolder(fixture.directory, destination: "box") == .exists)
+            #expect(await fixture.hosts.checkFolder("~/none-\(UUID().uuidString)", destination: "box") == .missing)
+            #expect(fixture.hosts.plainDestinations == ["box"])
+        }
+    }
+
+    @Test(.enabled(if: LocalSSHD.isAvailable), .timeLimit(.minutes(3)))
+    func a_missing_folder_is_told_before_the_install_question() async throws {
+        // 0384: a wrong folder must not cost a server install first.
+        try await withSSHDHost { host in
+            let fixture = Fixture(host)
+            #expect(await fixture.hosts.checkFolder("~/none-\(UUID().uuidString)", destination: "box") == .missing)
+            #expect(host.asked.isEmpty)
+            #expect(fixture.ready.isEmpty)
+            #expect(await fixture.hosts.checkFolder(fixture.directory, destination: "box") == .exists)
+            #expect(host.asked == ["box"])
+            #expect(fixture.ready == ["box"])
+            #expect(host.sshd.acceptedLogins() == 1)
+        }
+    }
+
+    @Test(.enabled(if: LocalSSHD.isAvailable), .timeLimit(.minutes(3)))
+    func the_folder_check_needs_no_host_script_of_the_bundle() async throws {
+        // 0358: a bundle with no host scripts refused every host at once.
+        try await withSSHDHost(answer: false) { host in
+            let fixture = Fixture(host, scripts: nil)
+            #expect(await fixture.hosts.checkFolder(fixture.directory, destination: "box") == .exists)
+            #expect(await fixture.hosts.checkFolder("~/none-\(UUID().uuidString)", destination: "box") == .missing)
+        }
+    }
+
+    @Test
+    func a_host_name_that_is_not_valid_is_unreachable() async {
+        let hosts = RemoteHosts(connections: .shared, servers: .shared, configuration: .init(key: "k", declines: .memory()))
+        #expect(await hosts.checkFolder("/tmp", destination: "-oProxyCommand=x") == .unreachable)
+    }
+
     // MARK: - The probe of a new session
 
     @Test
@@ -509,10 +566,19 @@ struct RemoteHostsTests {
 
         /// `wakes`: the posts reach a pane's driver too, as in the app.
         /// `roaming`: a roaming link (UDP) opens after the ssh connect.
-        init(_ host: SSHDHost, creationGrace: TimeInterval = 30, wakes: Bool = false, roaming: Bool = false) {
+        /// `scripts`: the host scripts of the bundle; nil as in a bundle
+        /// without them.
+        init(
+            _ host: SSHDHost,
+            creationGrace: TimeInterval = 30,
+            wakes: Bool = false,
+            roaming: Bool = false,
+            scripts: HostCommands.Scripts? = .bundled
+        ) {
             directory = host.home.path
             var configuration = RemoteHosts.Configuration(key: host.key, declines: .memory(), creationGrace: creationGrace)
             configuration.roamingEnabled = { roaming }
+            configuration.scripts = scripts
             configuration.post = { [posted] name in
                 posted.mutate { $0.append(name) }
                 if wakes { notify_post(name) }
