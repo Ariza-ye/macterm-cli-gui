@@ -7590,22 +7590,6 @@
         }
       }
     },
-    "Project icon" : {
-      "localizations" : {
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "프로젝트 아이콘"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "项目图标"
-          }
-        }
-      }
-    },
     "Projects" : {
       "comment" : "Command category\nSettings pane",
       "localizations" : {
