@@ -1713,7 +1713,7 @@ final class AppState {
         case network
         /// A login brought a host's link back (`.remoteHostDidConnect`).
         case hostConnected
-        /// A quiet roaming link heard its host again
+        /// A roaming link heard its host after a gap
         /// (`.remoteHostDidAnswer`). The host's lost panes try now, with no
         /// backoff (`RemoteReconnectPolicy.hostAnswered`).
         case hostAnswered
@@ -1752,7 +1752,7 @@ final class AppState {
         // A login may ask, and its sheet brings the app to the front. A wake
         // or a network change while the user is in another app waits for the
         // activation, which is a trigger too.
-        // A host's own event (a login, a quiet link that hears the host) is
+        // A host's own event (a login, a roaming link that hears the host after a gap) is
         // about that host and asks nothing more: it runs at once.
         let runsWhileInactive: Set<ReconnectTrigger> = [.activate, .projectSelected, .hostConnected, .hostAnswered]
         guard runsWhileInactive.contains(trigger) || NSApp.isActive else { return }
