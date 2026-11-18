@@ -10,8 +10,30 @@ This file loads when you work in `server/`. The root `AGENTS.md` has the build, 
   - The release workflows build from the commit, never from a prebuilt.
   - `build.sh` refuses a bundle whose server is not the build of the tree.
   - **The app carries a gzip build for every host target** for an install on a host, with no download: `Contents/Resources/server/macterm-<key>-<target>.gz` for `universal-macos`, `x86_64-linux` and `aarch64-linux`. The app reads the build key from the name of the macOS file (`ServerBuilds.bundledKey`); `embed-zmx.sh` names the files with the key of the installed manifest. `setup.sh` makes the Linux files next to `zmx`; `embed-zmx.sh` makes the macOS file from the signed `zmx`, so it has the app's identifier. The app's signature seals all three. `build.sh` refuses a bundle without them or with a macOS file that is not the bundled `zmx`. `build.sh` and `BundledResourcesTests` also check that each Linux file is an ELF binary for its machine.
-- **The server has no v1 code.** It started as the zmx fork at upstream v1.0.1 (the `DOWNSTREAM.md` of thdxg/zmx names each change by its old patch number: 0003 is the leadership claim, 0004 the disclaim, 0010 the foreground report). Its verbs are `session`, `server`, `connect`, `proxy`, `version` and `help`, and the hidden `__session` and `__schema`. v1's verbs (`attach`, `list`, `kill`, `get`, `set`, `clear`, `history`, `send`, `__daemon`) and their daemon are gone. A v1 session daemon (zmx 0.8.1) keeps running until the first v2 launch ends it by its argv (`V1Sessions`). Remote panes are sessions of the host's v2 server, and v1 sessions there keep running.
+- **The server has no v1 code.** It started as the zmx fork at upstream v1.0.1 (the `DOWNSTREAM.md` of thdxg/zmx names each change by its old patch number: 0003 is the leadership claim, 0004 the disclaim, 0010 the foreground report). Its own verbs are `server`, `connect`, `proxy` and `version`, and the hidden `__session` (the session process) and `__create-session` (tests make a session with it). Every other word goes to the `macterm` CLI (see below). v1's verbs (`attach`, `list`, `kill`, `get`, `set`, `clear`, `history`, `send`, `__daemon`) and their daemon are gone. A v1 session daemon (zmx 0.8.1) keeps running until the first v2 launch ends it by its argv (`V1Sessions`). Remote panes are sessions of the host's v2 server, and v1 sessions there keep running.
 - **The leader's terminal answers the terminal queries.** While no client leads, the session's ghostty-vt terminal answers them (`Watch.answers_all`), except the OSC color reports and the kitty graphics replies. The session answers the OSC 7501 support query at all times. No byte scanner answers a query.
+
+## The macterm CLI (design/011)
+
+The port of the Swift CLI to Zig is in `src/cli/`. The Swift CLI stays `Resources/bin/macterm` until the swap (design/011 §3). Until then, nothing that a user sees changes. To run the Zig CLI, use `zig-out/bin/zmx <verb>`.
+
+- **The v1 contract is the test.** `golden/` holds the grammar and the output of the v1 CLI (`contract.zig`). The tests in `cli.zig` check these items:
+  - each ported command against `contract.json`: abstract, usage, options, arguments and subcommands;
+  - the help of each ported leaf command against its `golden/help` file, byte for byte;
+  - each line of a ported verb against `cases.json`;
+  - each verb against a stand-in server on a real socket: the method that the CLI sends, the output and the exit code.
+
+  A port issue adds its verbs to `root` and sets the `method` of its lines in `cases.input.json`.
+- **Exit codes**: 0 when the command worked, 1 when the server refused it or it failed, 2 when no server answered, 64 for a usage error (as ArgumentParser).
+- **The CLI never starts the server.** `status` must fail while the app is not up.
+- **Discovery** (`client.candidates`). These are the steps, in order:
+  1. `--socket` gives one socket.
+  2. If there is no `--socket`, `MACTERM_RUNTIME_DIR` gives its `.server`.
+  3. If there is no `MACTERM_RUNTIME_DIR`, the CLI tries the folder of each build flavor: `macterm`, then `macterm-debug`. `LocalServer.runtimeDirectory` makes the same folders.
+
+  The CLI does not read `MACTERM_SOCKET`, because that variable names the app's `control.sock`.
+- The CLI sends `hello` with the role `cli`. A server of another build refuses it. The CLI then exits with 1 and shows the two builds. The server's pid comes from the socket (`runtime.peerPid`), not from the server.
+- **Use a streaming writer for output** (`writerStreaming`). A positional writer writes at the start of a file, also when the shell opened the file to append.
 
 ## The roaming link (design/009, issue 0201)
 
@@ -40,6 +62,6 @@ macOS attributes work that needs privacy permission (Local Network, TCC) to the 
   - `build.sh` refuses a release bundle whose zmx is ad-hoc or is not `com.thdxg.macterm`. `BundledResourcesTests` pins the identifier on the zmx of the built bundle. A change in a build phase therefore cannot turn every pane prompt into a prompt for "zmx" in silence.
 - Full Disk Access follows the same attribution. The programs of the daemon satisfy the own TCC requirement of the app (identifier and certificate). They inherit its FDA grant, and this stays true after the first new start.
 - You cannot change responsibility afterwards (`responsibility_set_*` needs a private entitlement). The disclaim exists only as a spawn attribute. This is why the server spawns `__session` itself, with no process between, and why there is no flag for it. The responsible root must *stay* a zmx process. A trampoline that ran the shell with exec would keep the pid, but the identity that macOS evaluates would become the identity of the shell.
-- **One spawn starts a session.** The spawn has `POSIX_SPAWN_SETSID`, and on macOS `POSIX_SPAWN_CLOEXEC_DEFAULT`, so the session gets only the fds of the file actions: /dev/null on 0 to 2, and its end of a socket pair on `session.spec_fd`. On Linux every fd of the server is close-on-exec. The spec is one msgpack `SessionCreate.Args` on that socket pair. The session binds its socket, starts the shell, then answers `session.ready_answer` or its error text on the same fd (`session.run`). The session stays a child of the server until the server exits (`Server.children`). The `session` verb asks the server, as `connect --` does.
+- **One spawn starts a session.** The spawn has `POSIX_SPAWN_SETSID`, and on macOS `POSIX_SPAWN_CLOEXEC_DEFAULT`, so the session gets only the fds of the file actions: /dev/null on 0 to 2, and its end of a socket pair on `session.spec_fd`. On Linux every fd of the server is close-on-exec. The spec is one msgpack `SessionCreate.Args` on that socket pair. The session binds its socket, starts the shell, then answers `session.ready_answer` or its error text on the same fd (`session.run`). The session stays a child of the server until the server exits (`Server.children`). The `__create-session` verb asks the server, as `connect --` does.
 - A session that an older build created keeps its old attribution until you create it again. The fix takes effect for each session.
 - To measure, use `responsibility_get_pid_responsible_for_pid` (a probe in C of ten lines). A Local Network prompt that nobody *answered* denies everything under that responsible process, also platform binaries. A subnet that looks dead can be a dialog that waits.
