@@ -14,8 +14,9 @@
 //! message, and no saved secret in a reply or an event (design/006 §1).
 
 const std = @import("std");
-const protocol = @import("protocol");
-const model = @import("model");
+const server_src = @import("wire");
+const protocol = server_src.protocol;
+const model = server_src.model;
 const msgpack = protocol.msgpack;
 const messages = protocol.messages;
 const frame = protocol.frame;
@@ -97,7 +98,7 @@ pub const Metadata = struct {
 pub const metadata: Metadata = build();
 
 fn build() Metadata {
-    @setEvalBranchQuota(100_000);
+    @setEvalBranchQuota(1_000_000);
     comptime {
         const handshake = .{ messages.Hello, messages.Refuse };
         const envelopes = .{ messages.Request, messages.Response, messages.EventBatch, messages.PaneMessage };
@@ -178,7 +179,7 @@ fn build() Metadata {
 /// Swift side would declare one of them twice.
 fn typeDefs(comptime types: []const type) [types.len]TypeDef {
     comptime {
-        @setEvalBranchQuota(100_000);
+        @setEvalBranchQuota(1_000_000);
         var out: [types.len]TypeDef = undefined;
         for (types, 0..) |T, i| {
             out[i] = typeDef(T);
@@ -339,7 +340,28 @@ fn fieldSince(comptime T: type, comptime name: []const u8) u32 {
     for (messages.methods) |M| {
         if (T == M.Args or T == M.Result) return M.since;
     }
-    return 1;
+    return carriedSince(T);
+}
+
+/// The lowest `since` of the methods and events that carry `T` (the model's
+/// types come with the messages of level 3). 1 for a type that a message of
+/// level 1 carries, or that no message carries.
+fn carriedSince(comptime T: type) u32 {
+    comptime {
+        @setEvalBranchQuota(2_000_000);
+        var lowest: ?u32 = null;
+        for (messages.methods) |M| {
+            for (collect(M.Result, collect(M.Args, &.{}))) |C| if (C == T) {
+                lowest = @min(lowest orelse M.since, M.since);
+            };
+        }
+        for (messages.events) |E| {
+            for (collect(E, &.{})) |C| if (C == T) {
+                lowest = @min(lowest orelse E.since, E.since);
+            };
+        }
+        return lowest orelse 1;
+    }
 }
 
 /// Names that the generated Swift uses for its own locals.
@@ -376,6 +398,8 @@ fn defaultText(comptime F: type, comptime value: F) []const u8 {
             @compileError("a default float must be finite"),
         .@"enum" => @tagName(value),
         .pointer => if (value.len == 0) "[]" else @compileError("a default array must be empty"),
+        // A struct whose own fields all have their defaults: `{}`.
+        .@"struct" => if (std.meta.eql(value, F{})) "{}" else @compileError("a default struct must be .{}"),
         else => @compileError("no default of type " ++ @typeName(F)),
     };
 }
@@ -1118,6 +1142,7 @@ fn formatDefault(pair: [2][]const u8, w: *std.Io.Writer) std.Io.Writer.Error!voi
         if (std.mem.eql(u8, p, wire)) return w.writeAll(text);
     }
     if (std.mem.eql(u8, text, "[]")) return w.writeAll("[]");
+    if (std.mem.eql(u8, text, "{}")) return w.writeAll(".init()");
     // An enum tag.
     try w.writeByte('.');
     try formatName(text, w);
