@@ -101,9 +101,17 @@ enum FocusRestoration {
             return
         }
         if let window, let view = find(window), view.window === window {
-            window.makeFirstResponder(view)
-            view.notifySurfaceFocused()
-            return
+            if let agent = view.agentPaneFocus {
+                guard window.isKeyWindow else { return }
+                if let input = agent.input, input.window === window {
+                    window.makeFirstResponder(input)
+                    return
+                }
+            } else {
+                window.makeFirstResponder(view)
+                view.notifySurfaceFocused()
+                return
+            }
         }
         guard attempt < maxAttempts else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + retryInterval) {

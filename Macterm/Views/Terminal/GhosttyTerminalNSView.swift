@@ -24,7 +24,7 @@ final class GhosttyTerminalNSView: NSView, ScrollbarSurface {
     /// Expose the focused terminal as an editable text target to accessibility
     /// clients such as VoiceOver and dictation tools, matching Ghostty.app.
     override func isAccessibilityElement() -> Bool {
-        true
+        agentPaneFocus == nil
     }
 
     override func accessibilityRole() -> NSAccessibility.Role? {
@@ -1166,7 +1166,7 @@ final class GhosttyTerminalNSView: NSView, ScrollbarSurface {
     /// Window focus is separate from app activation: the quick terminal can
     /// receive keys while another app is active.
     private func syncSurfaceFocus(_ focused: Bool) {
-        surfaceIsFocused = focused && window?.isKeyWindow == true
+        surfaceIsFocused = focused && agentPaneFocus == nil && window?.isKeyWindow == true
     }
 
     func notifySurfaceFocused() {
@@ -1179,9 +1179,14 @@ final class GhosttyTerminalNSView: NSView, ScrollbarSurface {
 
     // MARK: - First responder
 
-    override var acceptsFirstResponder: Bool { true }
+    weak var agentPaneFocus: AgentPaneFocus? {
+        didSet { if agentPaneFocus != nil { syncSurfaceFocus(false) } }
+    }
+
+    override var acceptsFirstResponder: Bool { agentPaneFocus == nil }
 
     override func becomeFirstResponder() -> Bool {
+        guard agentPaneFocus == nil else { return false }
         let result = super.becomeFirstResponder()
         if result {
             syncSurfaceFocus(true)
@@ -1278,6 +1283,7 @@ final class GhosttyTerminalNSView: NSView, ScrollbarSurface {
     }
 
     override func keyDown(with event: NSEvent) {
+        guard agentPaneFocus == nil else { return }
         onInteraction?()
         guard let surface else { super.keyDown(with: event)
             return

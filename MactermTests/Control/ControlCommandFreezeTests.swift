@@ -25,11 +25,15 @@ struct ControlCommandFreezeTests {
         "palette.list",
     ]
 
+    /// The Pi extension uses this private registration command. The CLI has no matching verb.
+    private static let integrationCommands: Set = ["pi.register"]
+
     @Test
     func control_socket_command_list_is_frozen() throws {
         let commands = try Self.dispatchedCommands()
-        let added = commands.subtracting(Self.frozenCommands).sorted()
-        let removed = Self.frozenCommands.subtracting(commands).sorted()
+        let expected = Self.frozenCommands.union(Self.integrationCommands)
+        let added = commands.subtracting(expected).sorted()
+        let removed = expected.subtracting(commands).sorted()
         #expect(
             added.isEmpty,
             """

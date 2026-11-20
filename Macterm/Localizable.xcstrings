@@ -1505,6 +1505,38 @@
         }
       }
     },
+    "Ask Pi a question…" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pi에 질문하기…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "向 Pi 提问…"
+          }
+        }
+      }
+    },
+    "Ask a question or describe a task." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "질문하거나 작업을 설명하세요."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "提出问题或描述任务。"
+          }
+        }
+      }
+    },
     "Asks for Touch ID, or your login password, before it fills in or shows a saved password." : {
       "localizations" : {
         "ko" : {
@@ -2473,6 +2505,22 @@
         }
       }
     },
+    "Code" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "코드"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "代码"
+          }
+        }
+      }
+    },
     "Color" : {
       "localizations" : {
         "ko" : {
@@ -2549,6 +2597,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "命令面板"
+          }
+        }
+      }
+    },
+    "Completed" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "완료"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已完成"
           }
         }
       }
@@ -2733,6 +2797,22 @@
         }
       }
     },
+    "Continue in Terminal" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "터미널에서 계속"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在终端中继续"
+          }
+        }
+      }
+    },
     "Copy" : {
       "comment" : "Command palette: the Option action of an extension row that copies text",
       "localizations" : {
@@ -2750,6 +2830,22 @@
         }
       }
     },
+    "Copy Code" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "코드 복사"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "拷贝代码"
+          }
+        }
+      }
+    },
     "Copy Link" : {
       "localizations" : {
         "ko" : {
@@ -2762,6 +2858,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "拷贝链接"
+          }
+        }
+      }
+    },
+    "Copy Message" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "메시지 복사"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "拷贝消息"
           }
         }
       }
@@ -4377,6 +4489,22 @@
         }
       }
     },
+    "Jump to Latest" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "최신 메시지로 이동"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "跳转到最新消息"
+          }
+        }
+      }
+    },
     "Jump to Top" : {
       "localizations" : {
         "ko" : {
@@ -5362,6 +5490,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "中"
+          }
+        }
+      }
+    },
+    "Message to Pi" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pi에 보낼 메시지"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "发给 Pi 的消息"
           }
         }
       }
@@ -7332,6 +7476,38 @@
         }
       }
     },
+    "Pi did not confirm the message." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pi가 메시지를 확인하지 않았습니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pi 未确认收到消息。"
+          }
+        }
+      }
+    },
+    "Pi is working" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pi 작업 중"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Pi 正在处理"
+          }
+        }
+      }
+    },
     "Pin Tab" : {
       "localizations" : {
         "ko" : {
@@ -9294,6 +9470,22 @@
         }
       }
     },
+    "Send" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "보내기"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "发送"
+          }
+        }
+      }
+    },
     "Send ${key} to ${pane}" : {
       "localizations" : {
         "ko" : {
@@ -9338,6 +9530,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "向窗格发送一个键组合，例如 ctrl+c、escape 或 up。"
+          }
+        }
+      }
+    },
+    "Sending…" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "보내는 중…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在发送…"
           }
         }
       }
@@ -9631,6 +9839,22 @@
         }
       }
     },
+    "Show Agent GUI" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "에이전트 GUI 보기"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "显示 Agent 界面"
+          }
+        }
+      }
+    },
     "Show Project Insights button" : {
       "localizations" : {
         "ko" : {
@@ -9643,6 +9867,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "显示项目洞察按钮"
+          }
+        }
+      }
+    },
+    "Show Terminal" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "터미널 보기"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "显示终端"
           }
         }
       }
@@ -10141,6 +10381,38 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "仅稳定版。"
+          }
+        }
+      }
+    },
+    "Start a conversation" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "대화 시작"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "开始对话"
+          }
+        }
+      }
+    },
+    "Stop" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "중지"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "停止"
           }
         }
       }
@@ -10806,6 +11078,22 @@
         }
       }
     },
+    "The message is too long." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "메시지가 너무 깁니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "消息过长。"
+          }
+        }
+      }
+    },
     "The pane has no frame yet. Try again." : {
       "localizations" : {
         "ko" : {
@@ -11448,6 +11736,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "切换边栏"
+          }
+        }
+      }
+    },
+    "Tool Activity" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "도구 활동"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "工具活动"
           }
         }
       }
@@ -12176,6 +12480,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "黄色"
+          }
+        }
+      }
+    },
+    "You" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "나"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "你"
           }
         }
       }

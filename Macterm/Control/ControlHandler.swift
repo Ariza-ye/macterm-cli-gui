@@ -79,7 +79,7 @@ final class ControlHandler {
 
     private func dispatch(_ request: ControlRequest, peerPID: pid_t?) async throws -> ControlData {
         let args = request.args ?? ControlArgs()
-        // Frozen: `ControlCommandFreezeTests` pins this list (design/011).
+        // ControlCommandFreezeTests pins the CLI and private integration commands.
         switch request.command {
         case "status": return status()
         case "project.list": return projectList()
@@ -121,6 +121,7 @@ final class ControlHandler {
         case "host.server": return try await hostServer(args)
         #endif
         case "ssh.askpass": return try await sshAskpass(args, peerPID: peerPID)
+        case "pi.register": return try registerPi(args)
         case "grid": return try grid(args)
         case "session.list": return try await sessionList()
         case "session.info": return try await sessionInfo(args)
@@ -142,6 +143,29 @@ final class ControlHandler {
                 action: "run `macterm --help` for the supported commands"
             )
         }
+    }
+
+    private func registerPi(_ args: ControlArgs) throws -> ControlData {
+        guard let session = args.session, !session.isEmpty, let registration = args.piBridge,
+              !registration.conversation.isEmpty, registration.conversation.utf8.count <= 256,
+              PiBridge.acceptsSocket(at: registration.socket)
+        else {
+            throw ControlError(code: .badRequest, message: "Supply a session, a Pi conversation ID, and a Pi bridge socket.")
+        }
+        let panes = appState.workspaces.values
+            .filter { $0.kind != .quick && $0.kind != .widget }
+            .flatMap { $0.tabs.flatMap { $0.splitRoot.allPanes() } }
+            .filter { $0.sessionName == session }
+        guard panes.count == 1, let pane = panes.first, !pane.isRemote else {
+            throw ControlError(code: .notFound, message: "The session must identify one local pane in a main window workspace.")
+        }
+        pane.bindPi(PiBridge(
+            path: registration.socket,
+            conversation: registration.conversation,
+            token: registration.token,
+            windowID: appState.keyWindowID ?? appState.windows.first?.id
+        ))
+        return ControlData()
     }
 
     // MARK: - Queries

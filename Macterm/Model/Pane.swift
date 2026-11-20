@@ -30,6 +30,23 @@ final class Pane: Identifiable {
     /// The raw slug this pane's session was named under, so a split-off
     /// sibling groups under the same project in `zmx ls`.
     let sessionSlug: String
+    /// Live Pi conversation, shared by the main windows that draw this pane.
+    private(set) var piBridge: PiBridge?
+
+    func bindPi(_ bridge: PiBridge) {
+        let previous = piBridge
+        piBridge = bridge
+        previous?.close()
+        bridge.start { [weak self, weak bridge] in
+            guard let self, piBridge === bridge else { return }
+            piBridge = nil
+        }
+    }
+
+    func disconnectPi() {
+        piBridge?.close()
+    }
+
     /// Whether this pane's project is remote (#104) — its `projectPath` is an
     /// scp-style spec and its session lives on the remote host. Cached at
     /// init: the poll and title paths read it every tick.

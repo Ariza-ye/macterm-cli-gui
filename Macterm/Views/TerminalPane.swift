@@ -30,6 +30,8 @@ struct TerminalPane: View {
         // This window's view of the pane: its own search, copy mode and
         // read-only state, its own view, its own client of the session.
         let surface = SurfaceRegistry.shared.surface(for: pane, in: host)
+        let agent = host.windowID == nil ? nil : pane.piBridge
+        let showsAgent = host.windowID.map { agent?.showsGUI(in: $0) == true } ?? false
         // The search bar sits above the terminal surface in a VStack, so showing
         // it pushes the terminal content down rather than overlaying it.
         VStack(spacing: 0) {
@@ -63,6 +65,7 @@ struct TerminalPane: View {
                 // dependency registers: an orphaned-with-no-host bump must
                 // re-render this subtree — see PaneSurface.reattachTick.
                 reattachTick: surface.reattachTick,
+                agent: showsAgent ? agent : nil,
                 onFocus: onFocus,
                 onProcessExit: onProcessExit,
                 onCommandFinished: onCommandFinished,
@@ -73,7 +76,7 @@ struct TerminalPane: View {
             // Overlays anchor to the surface, not the VStack, so the search
             // bar (above) never shifts them.
             .overlay(alignment: .bottomLeading) {
-                if let url = surface.hoverURL {
+                if !showsAgent, let url = surface.hoverURL {
                     LinkHoverBanner(url: url)
                 }
             }
@@ -84,6 +87,16 @@ struct TerminalPane: View {
                 // on the tab: a zoomed pane is the only pane on screen, and one
                 // row cannot overlap itself.
                 HStack(spacing: 6) {
+                    if let agent, agent.isReady, let windowID = host.windowID, !showsAgent {
+                        ModePill(
+                            title: String(localized: "Show Agent GUI"),
+                            systemImage: "bubble.left.and.text.bubble.right",
+                            help: String(localized: "Show Agent GUI")
+                        ) {
+                            onFocus()
+                            agent.setGUIVisible(true, in: windowID)
+                        }
+                    }
                     // Read-Only pill: libghostty sends no input to the pty.
                     // A click turns read-only off.
                     if surface.isReadOnly {
@@ -141,6 +154,9 @@ struct TerminalPane: View {
                     }
                 }
                 .modifier(PanePillRow())
+                .opacity(showsAgent ? 0 : 1)
+                .allowsHitTesting(!showsAgent)
+                .accessibilityHidden(showsAgent)
                 .padding(8)
                 // The row's place in the corner animates too, so that no
                 // badge jumps when the remote-link badge comes or goes.
@@ -254,6 +270,7 @@ private struct TerminalSurface: NSViewRepresentable {
     let isNonLeaderMirror: Bool
     /// Changes force `updateNSView` after an orphaned-with-no-host event.
     let reattachTick: Int
+    let agent: PiBridge?
     let onFocus: () -> Void
     let onProcessExit: () -> Void
     let onCommandFinished: () -> Void
@@ -292,6 +309,9 @@ private struct TerminalSurface: NSViewRepresentable {
     /// until the next `updateNSView`.
     final class ScrollHostView: NSView {
         weak var scroll: SurfaceScrollView?
+        let agentFocus = AgentPaneFocus()
+        weak var displayedAgent: PiBridge?
+        var agentOverlay: NSHostingView<AgentPaneView>?
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
@@ -303,6 +323,13 @@ private struct TerminalSurface: NSViewRepresentable {
             guard window != nil, let scroll else { return }
             scroll.reattachHost = self
             scroll.adopt(into: self)
+            if let agentOverlay { addSubview(agentOverlay, positioned: .above, relativeTo: scroll) }
+            syncAgentFocus()
+        }
+
+        func syncAgentFocus() {
+            guard let scroll, scroll.superview === self else { return }
+            (scroll.surfaceView as? GhosttyTerminalNSView)?.agentPaneFocus = agentOverlay == nil ? nil : agentFocus
         }
     }
 
@@ -314,6 +341,7 @@ private struct TerminalSurface: NSViewRepresentable {
         attach(scroll, to: host)
         let view = surface.ensureNSView()
         configure(view)
+        updateAgent(in: host, terminal: view)
         // Defer surface creation until the view is actually in a window — the
         // Metal layer needs a non-zero size to initialize. The re-attach also
         // runs after the whole SwiftUI transaction, so it repairs the
@@ -351,6 +379,9 @@ private struct TerminalSurface: NSViewRepresentable {
         guard host.window != nil || scroll.superview == nil else { return }
         scroll.reattachHost = host
         scroll.adopt(into: host)
+        if let overlay = host.agentOverlay, host.subviews.last !== overlay {
+            host.addSubview(overlay, positioned: .above, relativeTo: scroll)
+        }
     }
 
     func updateNSView(_ host: ScrollHostView, context: Context) {
@@ -361,6 +392,7 @@ private struct TerminalSurface: NSViewRepresentable {
         attach(scroll, to: host)
         let view = surface.ensureNSView()
         configure(view)
+        updateAgent(in: host, terminal: view)
 
         // Create the surface now if it's still pending (e.g. the view was
         // added to the window after first makeNSView).
@@ -385,6 +417,41 @@ private struct TerminalSurface: NSViewRepresentable {
         } else if !focused, wasFocused {
             view.notifySurfaceUnfocused()
         }
+    }
+
+    private func updateAgent(in host: ScrollHostView, terminal: GhosttyTerminalNSView) {
+        host.agentFocus.onFocus = onFocus
+        if host.displayedAgent !== agent || (agent == nil && host.agentOverlay != nil) {
+            let responder = host.window?.firstResponder as? NSView
+            let focusedOverlay = host.agentOverlay.map { responder?.isDescendant(of: $0) == true } ?? false
+            let opensFromTerminal = agent != nil && (responder == nil || responder is GhosttyTerminalNSView)
+            let restoresFocus = focused && host.window?.isKeyWindow == true
+                && (responder === terminal || focusedOverlay || opensFromTerminal)
+            host.agentOverlay?.removeFromSuperview()
+            host.agentOverlay = nil
+            host.displayedAgent = agent
+            if let agent, let windowID = surface.windowID {
+                let overlay = NSHostingView(rootView: AgentPaneView(
+                    bridge: agent,
+                    surface: surface,
+                    focus: host.agentFocus,
+                    showTerminal: { [weak agent] in
+                        onFocus()
+                        agent?.setGUIVisible(false, in: windowID)
+                    }
+                ))
+                overlay.frame = host.bounds
+                overlay.autoresizingMask = [.width, .height]
+                host.addSubview(overlay, positioned: .above, relativeTo: nil)
+                host.agentOverlay = overlay
+            }
+            if restoresFocus {
+                DispatchQueue.main.async { [surface] in
+                    FocusRestoration.restoreFocusWhenAttached(surface)
+                }
+            }
+        }
+        host.syncAgentFocus()
     }
 
     static func dismantleNSView(_ host: ScrollHostView, coordinator _: Coordinator) {
