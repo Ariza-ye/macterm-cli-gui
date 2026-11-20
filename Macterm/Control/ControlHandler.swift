@@ -121,7 +121,8 @@ final class ControlHandler {
         case "host.server": return try await hostServer(args)
         #endif
         case "ssh.askpass": return try await sshAskpass(args, peerPID: peerPID)
-        case "pi.register": return try registerPi(args)
+        case "pi.register": return try registerAgent(session: args.session, registration: args.piBridge, provider: .pi)
+        case "agy.register": return try registerAgent(session: args.session, registration: args.agentBridge, provider: .antigravity)
         case "grid": return try grid(args)
         case "session.list": return try await sessionList()
         case "session.info": return try await sessionInfo(args)
@@ -145,12 +146,14 @@ final class ControlHandler {
         }
     }
 
-    private func registerPi(_ args: ControlArgs) throws -> ControlData {
-        guard let session = args.session, !session.isEmpty, let registration = args.piBridge,
+    private func registerAgent(
+        session: String?, registration: ControlAgentRegistration?, provider: AgentBridge.Provider
+    ) throws -> ControlData {
+        guard let session, !session.isEmpty, let registration,
               !registration.conversation.isEmpty, registration.conversation.utf8.count <= 256,
-              PiBridge.acceptsSocket(at: registration.socket)
+              AgentBridge.acceptsSocket(at: registration.socket, for: provider)
         else {
-            throw ControlError(code: .badRequest, message: "Supply a session, a Pi conversation ID, and a Pi bridge socket.")
+            throw ControlError(code: .badRequest, message: "Supply a session, an agent conversation ID, and an agent bridge socket.")
         }
         let panes = appState.workspaces.values
             .filter { $0.kind != .quick && $0.kind != .widget }
@@ -159,7 +162,8 @@ final class ControlHandler {
         guard panes.count == 1, let pane = panes.first, !pane.isRemote else {
             throw ControlError(code: .notFound, message: "The session must identify one local pane in a main window workspace.")
         }
-        pane.bindPi(PiBridge(
+        pane.bindAgent(AgentBridge(
+            provider: provider,
             path: registration.socket,
             conversation: registration.conversation,
             token: registration.token,

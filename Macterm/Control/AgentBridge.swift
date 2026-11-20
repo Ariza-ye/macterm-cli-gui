@@ -1,10 +1,23 @@
 import Foundation
 import Network
 
-/// One Pi conversation on a local pane. The pane owns the connection, and each
-/// main window can show the conversation or the terminal independently.
+/// One agent conversation on a local pane. The pane owns the connection.
+/// Each main window can show the conversation or the terminal independently.
 @MainActor @Observable
-final class PiBridge {
+final class AgentBridge {
+    enum Provider: String {
+        case pi = "Pi"
+        case antigravity = "Antigravity"
+
+        var socketPrefix: String {
+            switch self {
+            case .pi: "pi"
+            case .antigravity: "agy"
+            }
+        }
+    }
+
+    let provider: Provider
     struct Row: Decodable, Identifiable {
         enum Kind: String, Decodable {
             case user
@@ -71,17 +84,19 @@ final class PiBridge {
     private var onClose: (() -> Void)?
     private static let maxFrameBytes = 1 << 20
 
-    init(path: String, conversation: String, token: UUID, windowID: UUID?) {
+    init(provider: Provider, path: String, conversation: String, token: UUID, windowID: UUID?) {
+        self.provider = provider
         self.conversation = conversation
         self.token = token
         initialWindowID = windowID
         connection = NWConnection(to: .unix(path: path), using: .tcp)
     }
 
-    /// Pi listens in a private folder under /tmp. Only connect to a socket
-    /// owned by the current user in that folder.
-    static func acceptsSocket(at path: String) -> Bool {
-        guard path.wholeMatch(of: #//tmp/macterm-pi-[A-Za-z0-9]{6}/bridge\.sock/#) != nil else { return false }
+    /// Only connect to a socket that the current user owns in a private folder.
+    static func acceptsSocket(at path: String, for provider: Provider) -> Bool {
+        guard path.hasPrefix("/tmp/macterm-\(provider.socketPrefix)-"),
+              path.wholeMatch(of: #//tmp/macterm-(pi|agy)-[A-Za-z0-9]{6}/bridge\.sock/#) != nil
+        else { return false }
         let directory = (path as NSString).deletingLastPathComponent
         var info = stat()
         guard lstat(directory, &info) == 0, info.st_uid == getuid(),
@@ -145,7 +160,7 @@ final class PiBridge {
     }
 
     private func canSend(from surface: PaneSurface) -> Bool {
-        guard !surface.isDestroyed, !surface.isReadOnly, surface.pane.piBridge === self,
+        guard !surface.isDestroyed, !surface.isReadOnly, surface.pane.agentBridge === self,
               let windowID = surface.windowID
         else { return false }
         return showsGUI(in: windowID)

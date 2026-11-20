@@ -30,7 +30,7 @@ struct TerminalPane: View {
         // This window's view of the pane: its own search, copy mode and
         // read-only state, its own view, its own client of the session.
         let surface = SurfaceRegistry.shared.surface(for: pane, in: host)
-        let agent = host.windowID == nil ? nil : pane.piBridge
+        let agent = host.windowID == nil ? nil : pane.agentBridge
         let showsAgent = host.windowID.map { agent?.showsGUI(in: $0) == true } ?? false
         // The search bar sits above the terminal surface in a VStack, so showing
         // it pushes the terminal content down rather than overlaying it.
@@ -270,7 +270,7 @@ private struct TerminalSurface: NSViewRepresentable {
     let isNonLeaderMirror: Bool
     /// Changes force `updateNSView` after an orphaned-with-no-host event.
     let reattachTick: Int
-    let agent: PiBridge?
+    let agent: AgentBridge?
     let onFocus: () -> Void
     let onProcessExit: () -> Void
     let onCommandFinished: () -> Void
@@ -310,7 +310,7 @@ private struct TerminalSurface: NSViewRepresentable {
     final class ScrollHostView: NSView {
         weak var scroll: SurfaceScrollView?
         let agentFocus = AgentPaneFocus()
-        weak var displayedAgent: PiBridge?
+        weak var displayedAgent: AgentBridge?
         var agentOverlay: NSHostingView<AgentPaneView>?
 
         override func viewDidMoveToWindow() {

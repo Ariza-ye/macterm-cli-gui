@@ -1180,6 +1180,22 @@
         }
       }
     },
+    "Agent is working" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "에이전트 작업 중"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agent 正在处理"
+          }
+        }
+      }
+    },
     "All" : {
       "comment" : "Settings → Extensions: the filter that shows every extension",
       "localizations" : {
@@ -1501,22 +1517,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "询问"
-          }
-        }
-      }
-    },
-    "Ask Pi a question…" : {
-      "localizations" : {
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Pi에 질문하기…"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "向 Pi 提问…"
           }
         }
       }
@@ -5494,18 +5494,18 @@
         }
       }
     },
-    "Message to Pi" : {
+    "Message to agent" : {
       "localizations" : {
         "ko" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Pi에 보낼 메시지"
+            "value" : "에이전트에 보낼 메시지"
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "发给 Pi 的消息"
+            "value" : "发给 Agent 的消息"
           }
         }
       }
@@ -7472,38 +7472,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "预览样式"
-          }
-        }
-      }
-    },
-    "Pi did not confirm the message." : {
-      "localizations" : {
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Pi가 메시지를 확인하지 않았습니다."
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Pi 未确认收到消息。"
-          }
-        }
-      }
-    },
-    "Pi is working" : {
-      "localizations" : {
-        "ko" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Pi 작업 중"
-          }
-        },
-        "zh-Hans" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Pi 正在处理"
           }
         }
       }
@@ -10788,6 +10756,22 @@
         }
       }
     },
+    "The agent did not confirm the message." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "에이전트가 메시지를 확인하지 않았습니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agent 未确认收到消息。"
+          }
+        }
+      }
+    },
     "The answer is incorrect." : {
       "localizations" : {
         "ko" : {
@@ -12457,6 +12441,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "工作树"
+          }
+        }
+      }
+    },
+    "Write a message…" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "메시지 쓰기…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "输入消息…"
           }
         }
       }

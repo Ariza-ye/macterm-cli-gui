@@ -5,7 +5,7 @@ import SwiftUI
 private let agentColumnWidth: CGFloat = 680
 
 struct AgentPaneView: View {
-    @Bindable var bridge: PiBridge
+    @Bindable var bridge: AgentBridge
     let surface: PaneSurface
     let focus: AgentPaneFocus
     let showTerminal: () -> Void
@@ -15,7 +15,7 @@ struct AgentPaneView: View {
             VStack(spacing: 0) {
                 header
                 Rectangle().fill(MactermTheme.border).frame(height: 1).accessibilityHidden(true)
-                AgentTranscript(rows: bridge.rows)
+                AgentTranscript(rows: bridge.rows, agentName: bridge.provider.rawValue)
                 composer(maxEditorHeight: min(240, max(36, pane.size.height * 0.4)))
             }
         }
@@ -31,7 +31,7 @@ struct AgentPaneView: View {
                 .font(.body.weight(.medium))
                 .foregroundStyle(MactermTheme.accent)
                 .accessibilityHidden(true)
-            Text(verbatim: "Pi").font(.headline)
+            Text(verbatim: bridge.provider.rawValue).font(.headline)
             Spacer(minLength: 4)
             if bridge.isWaiting {
                 Text("Continue in Terminal")
@@ -39,7 +39,7 @@ struct AgentPaneView: View {
                     .foregroundStyle(MactermTheme.warning)
                     .lineLimit(1)
             } else if bridge.isBusy {
-                ProgressView().controlSize(.mini).accessibilityLabel(Text("Pi is working"))
+                ProgressView().controlSize(.mini).accessibilityLabel(Text("Agent is working"))
             }
             Button(action: showTerminal) {
                 Label("Show Terminal", systemImage: "terminal")
@@ -56,7 +56,7 @@ struct AgentPaneView: View {
         VStack(spacing: 4) {
             ZStack(alignment: .topLeading) {
                 if bridge.draft.isEmpty {
-                    Text("Ask Pi a question…")
+                    Text("Write a message…")
                         .foregroundStyle(MactermTheme.fgMuted)
                         .padding(.horizontal, 12)
                         .padding(.top, 8)
@@ -118,11 +118,11 @@ struct AgentPaneView: View {
             }
             .foregroundStyle(MactermTheme.fgMuted)
         } else if bridge.sendRejected {
-            Text("Pi did not confirm the message.").foregroundStyle(MactermTheme.failure)
+            Text("The agent did not confirm the message.").foregroundStyle(MactermTheme.failure)
         } else if bridge.draft.utf8.count > 128 * 1024 {
             Text("The message is too long.").foregroundStyle(MactermTheme.failure)
         } else if bridge.isBusy {
-            Text("Pi is working").foregroundStyle(MactermTheme.fgMuted)
+            Text("Agent is working").foregroundStyle(MactermTheme.fgMuted)
         }
     }
 
@@ -133,7 +133,8 @@ struct AgentPaneView: View {
 }
 
 private struct AgentTranscript: View {
-    let rows: [PiBridge.Row]
+    let rows: [AgentBridge.Row]
+    let agentName: String
     var body: some View {
         GeometryReader { viewport in
             let columnWidth = max(0, min(agentColumnWidth, viewport.size.width - 32))
@@ -165,8 +166,8 @@ private struct AgentTranscript: View {
     }
 
     private enum Entry: Identifiable {
-        case message(PiBridge.Row)
-        case tools([PiBridge.Row])
+        case message(AgentBridge.Row)
+        case tools([AgentBridge.Row])
 
         var id: String {
             switch self {
@@ -178,7 +179,7 @@ private struct AgentTranscript: View {
 
     private var entries: [Entry] {
         var entries: [Entry] = []
-        var tools: [PiBridge.Row] = []
+        var tools: [AgentBridge.Row] = []
         for row in rows {
             if row.kind == .tool {
                 tools.append(row)
@@ -195,7 +196,7 @@ private struct AgentTranscript: View {
     }
 
     @ViewBuilder
-    private func message(_ row: PiBridge.Row, width: CGFloat) -> some View {
+    private func message(_ row: AgentBridge.Row, width: CGFloat) -> some View {
         if row.kind == .user {
             VStack(alignment: .trailing, spacing: 4) {
                 Text("You").font(.caption.weight(.medium)).foregroundStyle(MactermTheme.fgMuted)
@@ -216,7 +217,7 @@ private struct AgentTranscript: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
                     Image(systemName: "sparkle").foregroundStyle(MactermTheme.accent).accessibilityHidden(true)
-                    Text(verbatim: "Pi").foregroundStyle(MactermTheme.fgMuted)
+                    Text(verbatim: agentName).foregroundStyle(MactermTheme.fgMuted)
                 }
                 .font(.caption.weight(.semibold))
                 AgentMarkdownView(source: row.text)
@@ -270,7 +271,7 @@ private struct AgentTranscriptScroll<Content: View>: View {
 }
 
 private struct AgentToolGroup: View {
-    let rows: [PiBridge.Row]
+    let rows: [AgentBridge.Row]
 
     var body: some View {
         DisclosureGroup {
@@ -293,7 +294,7 @@ private struct AgentToolGroup: View {
                     Text(verbatim: running.name ?? "")
                         .lineLimit(1)
                         .foregroundStyle(MactermTheme.fgMuted)
-                    ProgressView().controlSize(.mini).accessibilityLabel(Text("Pi is working"))
+                    ProgressView().controlSize(.mini).accessibilityLabel(Text("Agent is working"))
                 } else if rows.contains(where: { $0.status == .failed }) {
                     Label("Failed", systemImage: "exclamationmark.circle").foregroundStyle(MactermTheme.failure)
                 } else {
@@ -308,7 +309,7 @@ private struct AgentToolGroup: View {
         .background(MactermTheme.surface, in: RoundedRectangle(cornerRadius: 8))
     }
 
-    private func tool(_ row: PiBridge.Row) -> some View {
+    private func tool(_ row: AgentBridge.Row) -> some View {
         DisclosureGroup {
             Text(verbatim: row.text)
                 .font(.system(.callout, design: .monospaced))
@@ -322,7 +323,7 @@ private struct AgentToolGroup: View {
                 Spacer(minLength: 0)
                 switch row.status {
                 case .running:
-                    ProgressView().controlSize(.mini).accessibilityLabel(Text("Pi is working"))
+                    ProgressView().controlSize(.mini).accessibilityLabel(Text("Agent is working"))
                 case .failed:
                     Text("Failed").foregroundStyle(MactermTheme.failure)
                 default:
@@ -394,7 +395,7 @@ private struct AgentComposer: NSViewRepresentable {
         input.focus = focus
         focus.input = input
         input.delegate = context.coordinator
-        input.setAccessibilityLabel(String(localized: "Message to Pi"))
+        input.setAccessibilityLabel(String(localized: "Message to agent"))
         input.isRichText = false
         input.allowsUndo = true
         input.drawsBackground = false

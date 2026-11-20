@@ -25,8 +25,8 @@ struct ControlCommandFreezeTests {
         "palette.list",
     ]
 
-    /// The Pi extension uses this private registration command. The CLI has no matching verb.
-    private static let integrationCommands: Set = ["pi.register"]
+    /// The agent bridges use these private commands to register.
+    private static let integrationCommands: Set = ["pi.register", "agy.register"]
 
     @Test
     func control_socket_command_list_is_frozen() throws {
