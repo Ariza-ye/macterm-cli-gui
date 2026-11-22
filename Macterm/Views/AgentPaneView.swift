@@ -81,11 +81,22 @@ struct AgentPaneView: View {
                     submit: { bridge.submit(from: surface) }
                 )
             }
-            HStack(spacing: 8) {
+            if hasComposerControls, hasComposerStatus {
                 composerStatus
                     .font(.caption)
                     .lineLimit(1)
-                Spacer(minLength: 0)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 12)
+            }
+            HStack(spacing: 6) {
+                if hasComposerControls {
+                    composerControls
+                } else {
+                    composerStatus
+                        .font(.caption)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 4)
                 if bridge.isBusy {
                     Button {
                         bridge.stop(from: surface)
@@ -94,6 +105,7 @@ struct AgentPaneView: View {
                     }
                     .buttonStyle(.bordered)
                     .disabled(surface.isReadOnly || !bridge.isReady)
+                    .fixedSize()
                 } else {
                     Button {
                         bridge.submit(from: surface)
@@ -102,6 +114,7 @@ struct AgentPaneView: View {
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(!canSubmit)
+                    .fixedSize()
                 }
             }
             .padding(.horizontal, 8)
@@ -117,6 +130,43 @@ struct AgentPaneView: View {
         .padding(.top, 4)
     }
 
+    private var hasComposerControls: Bool {
+        bridge.modelOption != nil || !bridge.speedOptions.isEmpty
+    }
+
+    private var hasComposerStatus: Bool {
+        surface.isReadOnly || bridge.pendingSend != nil || bridge.sendRejected || bridge.configRejected
+            || bridge.draft.utf8.count > 128 * 1024 || bridge.isBusy
+    }
+
+    private var canChangeConfig: Bool {
+        !surface.isReadOnly && bridge.isReady && !bridge.isBusy && !bridge.isWaiting
+            && bridge.pendingSend == nil && bridge.pendingConfigID == nil
+    }
+
+    @ViewBuilder
+    private var composerControls: some View {
+        if let model = bridge.modelOption {
+            AgentConfigControl(
+                option: model,
+                isPending: bridge.pendingConfigID == model.id,
+                isDisabled: !canChangeConfig || model.options.count <= 1,
+                allowsTruncation: true,
+                onSelect: { bridge.setConfig(model.id, value: $0, from: surface) }
+            )
+            .layoutPriority(-1)
+        }
+        ForEach(bridge.speedOptions) { speed in
+            AgentConfigControl(
+                option: speed,
+                isPending: bridge.pendingConfigID == speed.id,
+                isDisabled: !canChangeConfig || speed.options.count <= 1,
+                allowsTruncation: false,
+                onSelect: { bridge.setConfig(speed.id, value: $0, from: surface) }
+            )
+        }
+    }
+
     @ViewBuilder
     private var composerStatus: some View {
         if surface.isReadOnly {
@@ -129,6 +179,8 @@ struct AgentPaneView: View {
             .foregroundStyle(MactermTheme.fgMuted)
         } else if bridge.sendRejected {
             Text("The agent did not confirm the message.").foregroundStyle(MactermTheme.failure)
+        } else if bridge.configRejected {
+            Text("The agent did not apply the setting.").foregroundStyle(MactermTheme.failure)
         } else if bridge.draft.utf8.count > 128 * 1024 {
             Text("The message is too long.").foregroundStyle(MactermTheme.failure)
         } else if bridge.isBusy {
@@ -137,9 +189,285 @@ struct AgentPaneView: View {
     }
 
     private var canSubmit: Bool {
-        !surface.isReadOnly && bridge.isReady && !bridge.isBusy && !bridge.isWaiting && bridge.pendingSend == nil
+        !surface.isReadOnly && bridge.isReady && !bridge.isBusy && !bridge.isWaiting
+            && bridge.pendingSend == nil && bridge.pendingConfigID == nil
             && !bridge.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && bridge.draft.utf8.count <= 128 * 1024
     }
+}
+
+private struct AgentConfigControl: View {
+    let option: AgentBridge.ConfigOption
+    let isPending: Bool
+    let isDisabled: Bool
+    let allowsTruncation: Bool
+    let onSelect: (String) -> Void
+    @State private var showingPopover = false
+
+    private static let searchableThreshold = 20
+
+    var body: some View {
+        Group {
+            if option.options.count > Self.searchableThreshold {
+                Button {
+                    showingPopover.toggle()
+                } label: {
+                    label(showsChevron: true)
+                }
+                .buttonStyle(.plain)
+                .popover(isPresented: $showingPopover, arrowEdge: .top) {
+                    AgentSearchableOptionPopover(
+                        option: option,
+                        onSelect: { value in
+                            showingPopover = false
+                            onSelect(value)
+                        }
+                    )
+                }
+            } else {
+                Menu {
+                    menuContent
+                } label: {
+                    label(showsChevron: false)
+                }
+                .menuStyle(.borderlessButton)
+            }
+        }
+        .fixedSize(horizontal: !allowsTruncation, vertical: true)
+        .disabled(isDisabled)
+        .opacity(isDisabled && !isPending ? 0.6 : 1)
+        .help(Text(verbatim: option.name))
+        .accessibilityLabel(Text(verbatim: option.name))
+        .accessibilityValue(Text(verbatim: option.currentDisplayName))
+    }
+
+    private var iconName: String {
+        switch option.effectiveCategory {
+        case .model: "cpu"
+        case .thoughtLevel: "gauge.with.dots.needle.67percent"
+        case .speed,
+             .modelConfig: "bolt"
+        default: "slider.horizontal.3"
+        }
+    }
+
+    private func label(showsChevron: Bool) -> some View {
+        HStack(spacing: 4) {
+            if isPending {
+                ProgressView().controlSize(.mini)
+            } else {
+                Image(systemName: iconName)
+                    .font(.caption)
+                    .foregroundStyle(MactermTheme.fgMuted)
+                    .accessibilityHidden(true)
+            }
+            Text(verbatim: option.currentDisplayName)
+                .font(.caption)
+                .lineLimit(1)
+                .truncationMode(.tail)
+            if showsChevron {
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 9, weight: .medium))
+                    .foregroundStyle(MactermTheme.fgMuted)
+                    .accessibilityHidden(true)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(MactermTheme.bg, in: RoundedRectangle(cornerRadius: 6))
+        .overlay {
+            RoundedRectangle(cornerRadius: 6).strokeBorder(MactermTheme.border).allowsHitTesting(false)
+        }
+    }
+
+    @ViewBuilder
+    private var menuContent: some View {
+        let sections = groupedAgentChoices(option.options)
+        if sections.count == 1, sections[0].group == nil {
+            ForEach(sections[0].choices) { choice in
+                menuItem(choice)
+            }
+        } else {
+            ForEach(Array(sections.enumerated()), id: \.offset) { _, section in
+                if let group = section.group {
+                    Section(group) {
+                        ForEach(section.choices) { choice in
+                            menuItem(choice)
+                        }
+                    }
+                } else {
+                    ForEach(section.choices) { choice in
+                        menuItem(choice)
+                    }
+                }
+            }
+        }
+    }
+
+    private func menuItem(_ choice: AgentBridge.ConfigOption.Choice) -> some View {
+        Toggle(isOn: Binding(
+            get: { choice.value == option.currentValue },
+            set: { selected in
+                if selected { onSelect(choice.value) }
+            }
+        )) {
+            Text(verbatim: choice.name)
+        }
+    }
+}
+
+private struct AgentSearchableOptionPopover: View {
+    let option: AgentBridge.ConfigOption
+    let onSelect: (String) -> Void
+    @State private var query = ""
+    @State private var hoveredValue: String?
+    @FocusState private var searchFocused: Bool
+
+    private var filteredChoices: [AgentBridge.ConfigOption.Choice] {
+        let tokens = query
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .split(whereSeparator: \.isWhitespace)
+            .map(String.init)
+        guard !tokens.isEmpty else { return option.options }
+        return option.options.filter { choice in
+            let haystack = "\(choice.name) \(choice.value) \(choice.group ?? "")".lowercased()
+            return tokens.allSatisfy { haystack.contains($0) }
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .font(.caption)
+                    .foregroundStyle(MactermTheme.fgMuted)
+                    .accessibilityHidden(true)
+                TextField("Search", text: $query)
+                    .textFieldStyle(.plain)
+                    .font(.callout)
+                    .focused($searchFocused)
+                    .onSubmit {
+                        guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                              let first = filteredChoices.first
+                        else { return }
+                        onSelect(first.value)
+                    }
+                if !query.isEmpty {
+                    Button {
+                        query = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(MactermTheme.fgMuted)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(Text("Clear"))
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            Rectangle().fill(MactermTheme.border).frame(height: 1).accessibilityHidden(true)
+            let choices = filteredChoices
+            if choices.isEmpty {
+                Text("No matching options")
+                    .font(.callout)
+                    .foregroundStyle(MactermTheme.fgMuted)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: 2) {
+                            let sections = groupedAgentChoices(choices)
+                            ForEach(Array(sections.enumerated()), id: \.offset) { _, section in
+                                if let group = section.group {
+                                    Text(verbatim: group)
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(MactermTheme.fgMuted)
+                                        .padding(.horizontal, 10)
+                                        .padding(.top, 8)
+                                        .padding(.bottom, 2)
+                                }
+                                ForEach(section.choices) { choice in
+                                    choiceRow(choice)
+                                        .id(choice.value)
+                                }
+                            }
+                        }
+                        .padding(6)
+                    }
+                    .onAppear {
+                        searchFocused = true
+                        proxy.scrollTo(option.currentValue, anchor: .center)
+                    }
+                }
+            }
+        }
+        .frame(width: 340, height: 340)
+        .foregroundStyle(MactermTheme.fg)
+        .background(Color(nsColor: MactermTheme.nsConfiguredBg.withAlphaComponent(1)))
+    }
+
+    private func choiceRow(_ choice: AgentBridge.ConfigOption.Choice) -> some View {
+        let isSelected = choice.value == option.currentValue
+        let isHovered = hoveredValue == choice.value
+        return Button {
+            onSelect(choice.value)
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "checkmark")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(MactermTheme.accent)
+                    .opacity(isSelected ? 1 : 0)
+                    .frame(width: 12)
+                    .accessibilityHidden(true)
+                Text(verbatim: choice.name)
+                    .font(.callout)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                isHovered ? MactermTheme.accentSoft : (isSelected ? MactermTheme.surface : Color.clear),
+                in: RoundedRectangle(cornerRadius: 6)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            if hovering {
+                hoveredValue = choice.value
+            } else if hoveredValue == choice.value {
+                hoveredValue = nil
+            }
+        }
+        .help(Text(verbatim: choice.description ?? choice.value))
+    }
+}
+
+private func groupedAgentChoices(
+    _ choices: [AgentBridge.ConfigOption.Choice]
+) -> [(group: String?, choices: [AgentBridge.ConfigOption.Choice])] {
+    var groups: [(group: String?, choices: [AgentBridge.ConfigOption.Choice])] = []
+    var indexByGroup: [String: Int] = [:]
+    var ungroupedIndex: Int?
+    for choice in choices {
+        if let group = choice.group, !group.isEmpty {
+            if let index = indexByGroup[group] {
+                groups[index].choices.append(choice)
+            } else {
+                indexByGroup[group] = groups.count
+                groups.append((group, [choice]))
+            }
+        } else if let index = ungroupedIndex {
+            groups[index].choices.append(choice)
+        } else {
+            ungroupedIndex = groups.count
+            groups.append((nil, [choice]))
+        }
+    }
+    return groups
 }
 
 private struct AgentTranscript: View {

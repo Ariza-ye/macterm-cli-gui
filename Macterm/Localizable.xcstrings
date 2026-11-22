@@ -6267,6 +6267,22 @@
         }
       }
     },
+    "No matching options" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "일치하는 옵션이 없습니다"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有匹配的选项"
+          }
+        }
+      }
+    },
     "No node named %@" : {
       "localizations" : {
         "ko" : {
@@ -10752,6 +10768,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "远程项目不可使用“文件”屏幕"
+          }
+        }
+      }
+    },
+    "The agent did not apply the setting." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "에이전트가 설정을 적용하지 않았습니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agent 未应用该设置。"
           }
         }
       }

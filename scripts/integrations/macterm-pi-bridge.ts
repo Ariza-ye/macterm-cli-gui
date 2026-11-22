@@ -6,6 +6,8 @@ import { stripVTControlCharacters } from "node:util";
 
 type Entry = ReturnType<ExtensionContext["sessionManager"]["getBranch"]>[number];
 type Message = Extract<Entry, { type: "message" }>["message"];
+type PiModel = NonNullable<ExtensionContext["model"]>;
+type ThinkingLevel = ReturnType<ExtensionAPI["getThinkingLevel"]>;
 type Row = {
     id: string;
     kind: "user" | "assistant" | "tool";
@@ -13,6 +15,43 @@ type Row = {
     name?: string;
     status?: "running" | "completed" | "failed";
 };
+type ConfigChoice = {
+    value: string;
+    name: string;
+    group?: string;
+};
+type ConfigOption = {
+    id: string;
+    name: string;
+    category: "model" | "thought_level";
+    currentValue: string;
+    options: ConfigChoice[];
+};
+
+const THINKING_LEVELS: readonly ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+const THINKING_LABELS: Record<string, string> = {
+    off: "Off",
+    minimal: "Minimal",
+    low: "Low",
+    medium: "Medium",
+    high: "High",
+    xhigh: "Extra",
+    max: "Max",
+};
+
+function modelKey(model: PiModel): string {
+    return JSON.stringify([model.provider, model.id]);
+}
+
+function supportedThinkingLevels(model: ExtensionContext["model"]): ThinkingLevel[] {
+    if (!model?.reasoning) return [];
+    return THINKING_LEVELS.filter((level) => {
+        const mapped = model.thinkingLevelMap?.[level];
+        if (mapped === null) return false;
+        if (level === "xhigh" || level === "max") return mapped !== undefined;
+        return true;
+    });
+}
 
 function textContent(content: unknown): string {
     const text = typeof content === "string" ? content : Array.isArray(content)
@@ -55,6 +94,8 @@ export default function (pi: ExtensionAPI) {
     pi.on("agent_settled", () => { runtime?.status(); });
     pi.on("ui_prompt_start", () => { runtime?.setWaiting(true); });
     pi.on("ui_prompt_end", () => { runtime?.setWaiting(false); });
+    pi.on("model_select", () => { runtime?.config(); });
+    pi.on("thinking_level_select", () => { runtime?.config(); });
     pi.on("message_start", (event) => { runtime?.message(event.message, "start"); });
     pi.on("message_update", (event) => { runtime?.message(event.message, "update"); });
     pi.on("message_end", (event) => { runtime?.message(event.message, "end"); });
@@ -80,20 +121,77 @@ function startBridge(pi: ExtensionAPI, ctx: ExtensionContext, session: string, c
     let registeredSocket: string | undefined;
     let registeringSocket: string | undefined;
     let pending: { id: string; timer: NodeJS.Timeout; owner: Socket } | undefined;
+    let configPending = false;
     let waiting = false;
     let closed = false;
     let messageID = 0;
     const connected = new Set<Socket>();
     const activeMessages = new Map<string, string>();
     const toolArguments = new Map<string, string>();
+    const modelsByKey = new Map<string, PiModel>();
 
     const state = () => ({ busy: !ctx.isIdle(), waiting });
+    function buildConfigOptions(): ConfigOption[] {
+        const result: ConfigOption[] = [];
+        modelsByKey.clear();
+        const sourceModels = ctx.scopedModels.length > 0
+            ? ctx.scopedModels.map((entry) => entry.model)
+            : ctx.modelRegistry.getAvailable();
+        const models: PiModel[] = [];
+        const addModel = (model: PiModel | undefined) => {
+            if (!model) return;
+            const key = modelKey(model);
+            if (modelsByKey.has(key)) return;
+            modelsByKey.set(key, model);
+            models.push(model);
+        };
+        for (const model of sourceModels) addModel(model);
+        addModel(ctx.model);
+
+        if (models.length > 0) {
+            const currentValue = ctx.model ? modelKey(ctx.model) : modelKey(models[0]);
+            const options: ConfigChoice[] = models.map((model) => {
+                const providerName = ctx.modelRegistry.getProviderDisplayName?.(model.provider) || model.provider;
+                return {
+                    value: modelKey(model),
+                    name: stripVTControlCharacters(model.name || model.id),
+                    group: stripVTControlCharacters(providerName),
+                };
+            });
+            result.push({
+                id: "model",
+                name: "Model",
+                category: "model",
+                currentValue,
+                options,
+            });
+        }
+
+        const levels = supportedThinkingLevels(ctx.model);
+        if (levels.length > 1) {
+            const currentLevel = pi.getThinkingLevel();
+            const allLevels = levels.includes(currentLevel) ? levels : [currentLevel, ...levels];
+            result.push({
+                id: "thought_level",
+                name: "Thinking Level",
+                category: "thought_level",
+                currentValue: currentLevel,
+                options: allLevels.map((level) => ({
+                    value: level,
+                    name: THINKING_LABELS[level] ?? level,
+                })),
+            });
+        }
+
+        return result;
+    }
     function emit(frame: object) {
         if (!peer) return;
         if (peer.writableLength > 32 * 1024 * 1024) { peer.destroy(); return; }
         peer.write(JSON.stringify(frame) + "\n");
     }
     const status = () => emit({ type: "status", ...state() });
+    const config = () => emit({ type: "config", configOptions: buildConfigOptions() });
     function sendReply(accepted: boolean) {
         if (!pending) return;
         const { id, timer, owner } = pending;
@@ -109,7 +207,7 @@ function startBridge(pi: ExtensionAPI, ctx: ExtensionContext, session: string, c
             const row = messageRow(`entry:${entry.id}`, entry.message);
             if (row) emit({ type: "row", row });
         }
-        emit({ type: "snapshotEnd", ...state() });
+        emit({ type: "snapshotEnd", ...state(), configOptions: buildConfigOptions() });
     }
 
     const server = createServer((socket) => {
@@ -131,7 +229,14 @@ function startBridge(pi: ExtensionAPI, ctx: ExtensionContext, session: string, c
             while ((newline = buffer.indexOf("\n")) >= 0 && !socket.destroyed) {
                 const line = buffer.slice(0, newline);
                 buffer = buffer.slice(newline + 1);
-                let command: { type?: string; id?: string; token?: string; text?: string };
+                let command: {
+                    type?: string;
+                    id?: string;
+                    token?: string;
+                    text?: string;
+                    configId?: string;
+                    value?: string;
+                };
                 try { command = JSON.parse(line); } catch { socket.destroy(); return; }
                 if (!command || typeof command !== "object") { socket.destroy(); return; }
                 if (peer !== socket) {
@@ -147,8 +252,54 @@ function startBridge(pi: ExtensionAPI, ctx: ExtensionContext, session: string, c
                     snapshot();
                 } else if (command.type === "stop") {
                     if (!ctx.isIdle()) ctx.abort();
+                } else if (command.type === "setConfig" && typeof command.id === "string") {
+                    const replyConfig = (accepted: boolean) => {
+                        if (peer === socket) {
+                            emit({
+                                type: "configReply",
+                                id: command.id,
+                                accepted,
+                                configOptions: buildConfigOptions(),
+                                ...state(),
+                            });
+                        }
+                    };
+                    if (pending || configPending || waiting || !ctx.isIdle()
+                        || typeof command.configId !== "string" || typeof command.value !== "string") {
+                        replyConfig(false);
+                        continue;
+                    }
+                    if (command.configId === "model") {
+                        buildConfigOptions();
+                        const target = modelsByKey.get(command.value);
+                        if (!target) {
+                            replyConfig(false);
+                            continue;
+                        }
+                        configPending = true;
+                        void pi.setModel(target).then(
+                            (ok) => {
+                                configPending = false;
+                                replyConfig(Boolean(ok));
+                            },
+                            () => {
+                                configPending = false;
+                                replyConfig(false);
+                            },
+                        );
+                    } else if (command.configId === "thought_level") {
+                        const levels = supportedThinkingLevels(ctx.model);
+                        if (!levels.includes(command.value as ThinkingLevel)) {
+                            replyConfig(false);
+                            continue;
+                        }
+                        pi.setThinkingLevel(command.value as ThinkingLevel);
+                        replyConfig(true);
+                    } else {
+                        replyConfig(false);
+                    }
                 } else if (command.type === "send" && typeof command.id === "string") {
-                    if (pending || waiting || !ctx.isIdle() || typeof command.text !== "string"
+                    if (pending || configPending || waiting || !ctx.isIdle() || typeof command.text !== "string"
                         || !command.text.trim() || Buffer.byteLength(command.text) > 128 * 1024) {
                         emit({ type: "reply", id: command.id, accepted: false, ...state() });
                         continue;
@@ -199,7 +350,7 @@ function startBridge(pi: ExtensionAPI, ctx: ExtensionContext, session: string, c
     server.listen(path, register).unref();
 
     return {
-        close, snapshot, status,
+        close, snapshot, status, config,
         acceptSend: () => sendReply(true),
         setWaiting(value: boolean) { waiting = value; status(); },
         message(message: Message, phase: "start" | "update" | "end") {

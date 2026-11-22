@@ -29,6 +29,125 @@ export function clean(text) {
     return stripVTControlCharacters(String(text ?? "")).replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "");
 }
 
+function inferConfigCategory(id, category) {
+    if (typeof category === "string" && category.trim()) return category.trim();
+    switch (String(id ?? "").toLowerCase()) {
+        case "model":
+            return "model";
+        case "thought_level":
+        case "thinking_level":
+        case "effort":
+        case "reasoning_effort":
+            return "thought_level";
+        case "speed":
+        case "fast":
+        case "service_tier":
+        case "model_speed":
+            return "speed";
+        case "mode":
+            return "mode";
+        default:
+            return undefined;
+    }
+}
+
+function flattenSelectOptions(rawOptions) {
+    if (!Array.isArray(rawOptions)) return [];
+    const seen = new Set();
+    const choices = [];
+    const pushChoice = (entry, group) => {
+        if (!entry || typeof entry.value !== "string" || seen.has(entry.value)) return;
+        seen.add(entry.value);
+        const choice = {
+            value: entry.value,
+            name: clean(entry.name || entry.value),
+        };
+        if (typeof entry.description === "string" && entry.description.trim()) {
+            choice.description = clean(entry.description).slice(0, 256);
+        }
+        if (group) choice.group = group;
+        choices.push(choice);
+    };
+    for (const entry of rawOptions) {
+        if (entry && Array.isArray(entry.options)) {
+            const group = clean(entry.name || entry.group || "") || undefined;
+            for (const nested of entry.options) pushChoice(nested, group);
+        } else {
+            pushChoice(entry, undefined);
+        }
+    }
+    return choices;
+}
+
+export function normalizeConfigOptions(rawConfigOptions, rawModels) {
+    const booleanIds = new Set();
+    const normalized = [];
+
+    if (Array.isArray(rawConfigOptions) && rawConfigOptions.length > 0) {
+        for (const item of rawConfigOptions) {
+            if (!item || typeof item.id !== "string" || !item.id.trim()) continue;
+            const id = item.id;
+            const name = clean(item.name || id);
+            const category = inferConfigCategory(id, item.category);
+            if (item.type === "boolean") {
+                booleanIds.add(id);
+                normalized.push({
+                    id,
+                    name,
+                    ...(category ? { category } : {}),
+                    currentValue: item.currentValue ? "true" : "false",
+                    options: [
+                        { value: "false", name: "Off" },
+                        { value: "true", name: "On" },
+                    ],
+                });
+                continue;
+            }
+            const options = flattenSelectOptions(item.options);
+            if (options.length === 0) continue;
+            const currentValue = typeof item.currentValue === "string" ? item.currentValue : options[0].value;
+            normalized.push({
+                id,
+                name,
+                ...(category ? { category } : {}),
+                currentValue,
+                options,
+            });
+        }
+        return { configOptions: normalized, usesLegacyModels: false, booleanIds };
+    }
+
+    if (rawModels && Array.isArray(rawModels.availableModels) && rawModels.availableModels.length > 0) {
+        const seen = new Set();
+        const options = [];
+        for (const model of rawModels.availableModels) {
+            const value = model?.modelId ?? model?.id;
+            if (typeof value !== "string" || !value || seen.has(value)) continue;
+            seen.add(value);
+            const choice = { value, name: clean(model.name || value) };
+            if (typeof model.description === "string" && model.description.trim()) {
+                choice.description = clean(model.description).slice(0, 256);
+            }
+            options.push(choice);
+        }
+        if (options.length > 0) {
+            const currentValue = typeof rawModels.currentModelId === "string"
+                ? rawModels.currentModelId
+                : options[0].value;
+            normalized.push({
+                id: "model",
+                name: "Model",
+                category: "model",
+                currentValue,
+                options,
+            });
+            return { configOptions: normalized, usesLegacyModels: true, booleanIds };
+        }
+    }
+
+    return { configOptions: [], usesLegacyModels: false, booleanIds };
+}
+
 export function formatToolText(update, previous) {
     const details = Array.isArray(update.content)
         ? update.content.flatMap(item => {
@@ -174,9 +293,28 @@ export async function runAcpBridge(config, runtime = {}) {
     let challenge;
     let boundSocket;
     let closed = false;
+    let configOptions = [];
+    let usesLegacyModels = false;
+    let booleanConfigIds = new Set();
+    let configPending = false;
 
     const writeOut = text => outputStream.write(text);
     const writeErr = text => errorStream.write(text);
+
+    function applySessionConfig(rawConfigOptions, rawModels) {
+        const next = normalizeConfigOptions(rawConfigOptions, rawModels);
+        configOptions = next.configOptions;
+        usesLegacyModels = next.usesLegacyModels;
+        booleanConfigIds = next.booleanIds;
+    }
+
+    function updateConfigOptions(rawConfigOptions) {
+        const next = normalizeConfigOptions(rawConfigOptions, undefined);
+        configOptions = next.configOptions;
+        usesLegacyModels = false;
+        booleanConfigIds = next.booleanIds;
+        emit({ type: "config", configOptions });
+    }
 
     function rpc(frame) {
         if (!closed && agent.stdin.writable) {
@@ -246,6 +384,14 @@ export async function runAcpBridge(config, runtime = {}) {
             const text = formatToolText(update, previous);
             if (!previous) writeOut(`\n${name}\n`);
             upsert({ id, kind: "tool", text, name, status: toolStatus });
+        } else if ((type === "config_option_update" || type === "config_options_update")
+            && Array.isArray(update.configOptions)) {
+            updateConfigOptions(update.configOptions);
+        } else if (type === "current_model_update" && usesLegacyModels && typeof update.modelId === "string") {
+            configOptions = configOptions.map(option =>
+                option.id === "model" ? { ...option, currentValue: update.modelId } : option,
+            );
+            emit({ type: "config", configOptions });
         }
     }
 
@@ -327,6 +473,49 @@ export async function runAcpBridge(config, runtime = {}) {
         cancelPermissions();
     }
 
+    async function setConfig(configId, value, owner, id) {
+        const reply = accepted => {
+            if (owner && owner === peer) emit({ type: "configReply", id, accepted, configOptions, ...state() });
+        };
+        const option = configOptions.find(item => item.id === configId);
+        if (!sessionID || turn || permissions.size || configPending || typeof configId !== "string"
+            || typeof value !== "string" || !option || !option.options.some(choice => choice.value === value)) {
+            reply(false);
+            return;
+        }
+        configPending = true;
+        try {
+            if (usesLegacyModels && configId === "model") {
+                await request("session/set_model", { sessionId: sessionID, modelId: value });
+                configOptions = configOptions.map(item =>
+                    item.id === configId ? { ...item, currentValue: value } : item,
+                );
+            } else {
+                const wireValue = booleanConfigIds.has(configId) ? value === "true" : value;
+                const result = await request("session/set_config_option", {
+                    sessionId: sessionID,
+                    configId,
+                    value: wireValue,
+                });
+                if (Array.isArray(result?.configOptions)) {
+                    const next = normalizeConfigOptions(result.configOptions, undefined);
+                    configOptions = next.configOptions;
+                    booleanConfigIds = next.booleanIds;
+                } else {
+                    configOptions = configOptions.map(item =>
+                        item.id === configId ? { ...item, currentValue: value } : item,
+                    );
+                }
+            }
+            reply(true);
+        } catch (error) {
+            writeErr(`\n${clean(error.message)}\n`);
+            reply(false);
+        } finally {
+            configPending = false;
+        }
+    }
+
     terminal.on("line", line => {
         if (permissions.size) {
             const req = permissions.values().next().value;
@@ -376,9 +565,11 @@ export async function runAcpBridge(config, runtime = {}) {
                 socket.setTimeout(0);
                 emit({ type: "snapshot", conversation: sessionID });
                 for (const row of rows.values()) emit({ type: "row", row });
-                emit({ type: "snapshotEnd", ...state() });
+                emit({ type: "snapshotEnd", ...state(), configOptions });
             } else if (command?.type === "send" && typeof command.id === "string") {
                 void prompt(command.text, socket, command.id);
+            } else if (command?.type === "setConfig" && typeof command.id === "string") {
+                void setConfig(command.configId, command.value, socket, command.id);
             } else if (command?.type === "stop") {
                 stop();
             }
@@ -463,13 +654,16 @@ export async function runAcpBridge(config, runtime = {}) {
         });
         if (initialized?.protocolVersion !== 1) throw new Error("Macterm requires ACP version 1.");
         const params = { cwd, mcpServers: [] };
+        let sessionResult;
         if (config.conversation) {
             sessionID = config.conversation;
-            await request("session/load", { ...params, sessionId: sessionID });
+            sessionResult = await request("session/load", { ...params, sessionId: sessionID });
         } else {
-            ({ sessionId: sessionID } = await request("session/new", params));
+            sessionResult = await request("session/new", params);
+            sessionID = sessionResult?.sessionId;
         }
         if (!sessionID) throw new Error(`${config.name} did not provide a conversation ID.`);
+        applySessionConfig(sessionResult?.configOptions, sessionResult?.models);
         clearTimeout(startup);
         message = undefined;
         writeOut(`\n${config.name} conversation: ${clean(sessionID)}\n`);

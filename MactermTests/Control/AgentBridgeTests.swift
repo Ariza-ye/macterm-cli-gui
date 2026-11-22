@@ -175,4 +175,269 @@ struct AgentBridgeTests {
         #expect(legacyResponse.ok)
         #expect(pane.agentBridge?.provider == .antigravity)
     }
+
+    // MARK: - Model & speed configuration
+
+    @Test
+    func config_option_infers_categories_and_resolves_display_name() throws {
+        let json = """
+        [
+          {
+            "id": "model",
+            "name": "Model",
+            "currentValue": "gemini-4-neon",
+            "options": [
+              { "value": "gemini-4-neon", "name": "Gemini 4 Neon" }
+            ]
+          },
+          {
+            "id": "effort",
+            "name": "Effort",
+            "category": "thought_level",
+            "currentValue": "high",
+            "options": [
+              { "value": "low", "name": "Low" },
+              { "value": "high", "name": "High" }
+            ]
+          },
+          {
+            "id": "service_tier",
+            "name": "Speed",
+            "currentValue": "fast",
+            "options": [
+              { "value": "standard", "name": "Standard" },
+              { "value": "fast", "name": "Fast" }
+            ]
+          },
+          {
+            "id": "custom_flag",
+            "name": "Custom",
+            "category": "future_unknown_category",
+            "currentValue": "a",
+            "options": [
+              { "value": "a", "name": "A" }
+            ]
+          }
+        ]
+        """
+        let decoded = try JSONDecoder().decode([AgentBridge.ConfigOption].self, from: Data(json.utf8))
+        #expect(decoded.count == 4)
+        #expect(decoded[0].effectiveCategory == .model)
+        #expect(decoded[0].currentDisplayName == "Gemini 4 Neon")
+        #expect(decoded[1].effectiveCategory == .thoughtLevel)
+        #expect(decoded[1].currentDisplayName == "High")
+        #expect(decoded[2].effectiveCategory == .speed)
+        #expect(decoded[2].currentDisplayName == "Fast")
+        #expect(decoded[3].effectiveCategory == .other)
+    }
+
+    @Test
+    func bridge_syncs_and_switches_model_and_speed_over_socket() async throws {
+        let (_, appState, projectStore) = makeHandler()
+        let pane = try seedPane(appState, projectStore)
+        let windowID = UUID()
+        let surface = SurfaceRegistry.shared.surface(for: pane, in: .window(windowID))
+        defer {
+            pane.disconnectAgent()
+            SurfaceRegistry.shared.destroySurfaces(of: pane)
+        }
+
+        let (socketPath, serverFD, cleanup) = try makeListeningBridgeSocket(prefix: "agent")
+        defer { cleanup() }
+
+        let token = UUID()
+        let bridge = AgentBridge(
+            provider: .antigravity,
+            path: socketPath,
+            conversation: "conv-config",
+            token: token,
+            windowID: windowID
+        )
+        pane.bindAgent(bridge)
+
+        let peerFD = try await acceptClient(on: serverFD)
+        defer { close(peerFD) }
+
+        let helloLine = try await readLine(from: peerFD)
+        let hello = try #require(JSONSerialization.jsonObject(with: Data(helloLine.utf8)) as? [String: Any])
+        #expect(hello["type"] as? String == "hello")
+        #expect((hello["token"] as? String)?.lowercased() == token.uuidString.lowercased())
+
+        let initialConfig: [[String: Any]] = [
+            [
+                "id": "model",
+                "name": "Model",
+                "category": "model",
+                "currentValue": "gemini-4-neon",
+                "options": [
+                    ["value": "gemini-4-neon", "name": "Gemini 4 Neon"],
+                    ["value": "gemini-3.8-flash", "name": "Gemini 3.8 Flash"],
+                ],
+            ],
+            [
+                "id": "thought_level",
+                "name": "Thinking Level",
+                "category": "thought_level",
+                "currentValue": "high",
+                "options": [
+                    ["value": "low", "name": "Low"],
+                    ["value": "medium", "name": "Medium"],
+                    ["value": "high", "name": "High"],
+                ],
+            ],
+            [
+                "id": "mode",
+                "name": "Mode",
+                "category": "mode",
+                "currentValue": "default",
+                "options": [
+                    ["value": "default", "name": "Default"],
+                    ["value": "plan", "name": "Plan"],
+                ],
+            ],
+        ]
+        try writeFrame(["type": "snapshot", "conversation": "conv-config"], to: peerFD)
+        try writeFrame(["type": "snapshotEnd", "busy": false, "waiting": false, "configOptions": initialConfig], to: peerFD)
+
+        try await waitUntil { bridge.isReady && bridge.modelOption?.currentValue == "gemini-4-neon" }
+        #expect(bridge.speedOptions.count == 1)
+        #expect(bridge.speedOptions[0].id == "thought_level")
+        #expect(bridge.speedOptions[0].currentValue == "high")
+
+        // Switch thinking level (speed)
+        bridge.setConfig("thought_level", value: "low", from: surface)
+        #expect(bridge.pendingConfigID == "thought_level")
+
+        let setSpeedLine = try await readLine(from: peerFD)
+        let setSpeed = try #require(JSONSerialization.jsonObject(with: Data(setSpeedLine.utf8)) as? [String: Any])
+        #expect(setSpeed["type"] as? String == "setConfig")
+        #expect(setSpeed["configId"] as? String == "thought_level")
+        #expect(setSpeed["value"] as? String == "low")
+        let speedReqID = try #require(setSpeed["id"] as? String)
+
+        var updatedConfig = initialConfig
+        updatedConfig[1]["currentValue"] = "low"
+        try writeFrame([
+            "type": "configReply",
+            "id": speedReqID,
+            "accepted": true,
+            "configOptions": updatedConfig,
+        ], to: peerFD)
+
+        try await waitUntil { bridge.pendingConfigID == nil && bridge.speedOptions.first?.currentValue == "low" }
+        #expect(!bridge.configRejected)
+
+        // Rejected switch sets configRejected and preserves previous value
+        bridge.setConfig("model", value: "gemini-3.8-flash", from: surface)
+        let setModelLine = try await readLine(from: peerFD)
+        let setModel = try #require(JSONSerialization.jsonObject(with: Data(setModelLine.utf8)) as? [String: Any])
+        let modelReqID = try #require(setModel["id"] as? String)
+        try writeFrame([
+            "type": "configReply",
+            "id": modelReqID,
+            "accepted": false,
+            "configOptions": updatedConfig,
+        ], to: peerFD)
+
+        try await waitUntil { bridge.pendingConfigID == nil && bridge.configRejected }
+        #expect(bridge.modelOption?.currentValue == "gemini-4-neon")
+
+        // Server-pushed config update syncs live (e.g. changed in terminal)
+        updatedConfig[0]["currentValue"] = "gemini-3.8-flash"
+        updatedConfig[1]["currentValue"] = "medium"
+        try writeFrame(["type": "config", "configOptions": updatedConfig], to: peerFD)
+        try await waitUntil {
+            bridge.modelOption?.currentValue == "gemini-3.8-flash"
+                && bridge.speedOptions.first?.currentValue == "medium"
+        }
+    }
+
+    private func makeListeningBridgeSocket(prefix: String) throws -> (String, Int32, () -> Void) {
+        let token = String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(6))
+        let directory = "/tmp/macterm-\(prefix)-\(token)"
+        try FileManager.default.createDirectory(
+            atPath: directory,
+            withIntermediateDirectories: false,
+            attributes: [.posixPermissions: NSNumber(value: mode_t(0o700))]
+        )
+        let path = "\(directory)/bridge.sock"
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        try #require(fd >= 0)
+
+        var addr = sockaddr_un()
+        addr.sun_family = sa_family_t(AF_UNIX)
+        let bytes = Array(path.utf8)
+        withUnsafeMutableBytes(of: &addr.sun_path) { raw in
+            for (index, byte) in bytes.enumerated() {
+                raw[index] = byte
+            }
+            raw[bytes.count] = 0
+        }
+        let bindResult = withUnsafePointer(to: &addr) { ptr in
+            ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in
+                bind(fd, sockPtr, socklen_t(MemoryLayout<sockaddr_un>.size))
+            }
+        }
+        try #require(bindResult == 0)
+        try #require(listen(fd, 4) == 0)
+
+        return (path, fd, {
+            close(fd)
+            try? FileManager.default.removeItem(atPath: directory)
+        })
+    }
+
+    private func acceptClient(on serverFD: Int32) async throws -> Int32 {
+        try await Task.detached {
+            var pfd = pollfd(fd: serverFD, events: Int16(POLLIN), revents: 0)
+            let ready = poll(&pfd, 1, 5000)
+            guard ready > 0 else { throw POSIXError(.ETIMEDOUT) }
+            let client = accept(serverFD, nil, nil)
+            guard client >= 0 else { throw POSIXError(.ECONNABORTED) }
+            return client
+        }.value
+    }
+
+    private func readLine(from fd: Int32) async throws -> String {
+        try await Task.detached {
+            var data = Data()
+            var byte: UInt8 = 0
+            while true {
+                var pfd = pollfd(fd: fd, events: Int16(POLLIN), revents: 0)
+                let ready = poll(&pfd, 1, 5000)
+                guard ready > 0 else { throw POSIXError(.ETIMEDOUT) }
+                let count = read(fd, &byte, 1)
+                guard count == 1 else { throw POSIXError(.ECONNRESET) }
+                if byte == 0x0A { break }
+                data.append(byte)
+            }
+            return String(decoding: data, as: UTF8.self)
+        }.value
+    }
+
+    private func writeFrame(_ object: [String: Any], to fd: Int32) throws {
+        var data = try JSONSerialization.data(withJSONObject: object)
+        data.append(0x0A)
+        try data.withUnsafeBytes { raw in
+            guard let base = raw.baseAddress else { return }
+            var offset = 0
+            while offset < data.count {
+                let written = write(fd, base.advanced(by: offset), data.count - offset)
+                guard written > 0 else { throw POSIXError(.EPIPE) }
+                offset += written
+            }
+        }
+    }
+
+    private func waitUntil(timeout: Duration = .seconds(3), condition: @MainActor () -> Bool) async throws {
+        let clock = ContinuousClock()
+        let deadline = clock.now + timeout
+        while !condition() {
+            if clock.now >= deadline {
+                Issue.record("Timed out waiting for condition")
+                throw POSIXError(.ETIMEDOUT)
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+    }
 }

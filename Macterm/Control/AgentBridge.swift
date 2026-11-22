@@ -74,6 +74,57 @@ final class AgentBridge {
         case failed
     }
 
+    struct ConfigOption: Decodable, Identifiable, Equatable {
+        enum Category: String, Decodable, Equatable {
+            case model
+            case thoughtLevel = "thought_level"
+            case speed
+            case modelConfig = "model_config"
+            case mode
+            case other
+
+            init(from decoder: Decoder) throws {
+                let raw = try decoder.singleValueContainer().decode(String.self)
+                self = Self(rawValue: raw) ?? .other
+            }
+        }
+
+        struct Choice: Decodable, Identifiable, Equatable {
+            var id: String { value }
+            let value: String
+            let name: String
+            var description: String?
+            var group: String?
+        }
+
+        let id: String
+        let name: String
+        var category: Category?
+        let currentValue: String
+        let options: [Choice]
+
+        var effectiveCategory: Category {
+            if let category, category != .other { return category }
+            switch id.lowercased() {
+            case "model": return .model
+            case "thought_level",
+                 "thinking_level",
+                 "effort",
+                 "reasoning_effort": return .thoughtLevel
+            case "speed",
+                 "fast",
+                 "service_tier",
+                 "model_speed": return .speed
+            case "mode": return .mode
+            default: return category ?? .other
+            }
+        }
+
+        var currentDisplayName: String {
+            options.first { $0.value == currentValue }?.name ?? currentValue
+        }
+    }
+
     private struct Event: Decodable {
         enum Kind: String, Decodable {
             case snapshot
@@ -81,6 +132,8 @@ final class AgentBridge {
             case snapshotEnd
             case status
             case reply
+            case config
+            case configReply
         }
 
         let type: Kind
@@ -90,6 +143,7 @@ final class AgentBridge {
         var waiting: Bool?
         var id: UUID?
         var accepted: Bool?
+        var configOptions: [ConfigOption]?
     }
 
     private struct Command: Encodable {
@@ -97,15 +151,32 @@ final class AgentBridge {
         var token: UUID?
         var id: UUID?
         var text: String?
+        var configId: String?
+        var value: String?
     }
 
     private(set) var rows: [Row] = []
+    private(set) var configOptions: [ConfigOption] = []
     private(set) var isReady = false
     private(set) var isBusy = false
     private(set) var isWaiting = false
     private(set) var pendingSend: UUID?
     private(set) var sendRejected = false
+    private(set) var pendingConfigID: String?
+    private(set) var configRejected = false
     var draft = ""
+
+    var modelOption: ConfigOption? {
+        configOptions.first { $0.effectiveCategory == .model && !$0.options.isEmpty }
+    }
+
+    var speedOptions: [ConfigOption] {
+        configOptions.filter { option in
+            let category = option.effectiveCategory
+            return (category == .thoughtLevel || category == .speed || category == .modelConfig)
+                && option.options.count > 1
+        }
+    }
 
     private let initialWindowID: UUID?
     private var windowModes: [UUID: Bool] = [:]
@@ -117,6 +188,8 @@ final class AgentBridge {
     private var snapshot: [Row]?
     private var isClosed = false
     private var requestTimeout: Task<Void, Never>?
+    private var pendingConfigRequest: (id: UUID, configID: String)?
+    private var configTimeout: Task<Void, Never>?
     private var onClose: (() -> Void)?
     private static let maxFrameBytes = 1 << 20
 
@@ -172,20 +245,24 @@ final class AgentBridge {
         isClosed = true
         isReady = false
         pendingSend = nil
+        pendingConfigRequest = nil
+        pendingConfigID = nil
         requestTimeout?.cancel()
+        configTimeout?.cancel()
         connection.cancel()
         onClose?()
         onClose = nil
     }
 
     func submit(from surface: PaneSurface) {
-        guard canSend(from: surface), !isBusy, !isWaiting, pendingSend == nil,
+        guard canSend(from: surface), !isBusy, !isWaiting, pendingSend == nil, pendingConfigRequest == nil,
               !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               draft.utf8.count <= 128 * 1024
         else { return }
         let id = UUID()
         let submitted = draft
         sendRejected = false
+        configRejected = false
         pendingSend = id
         send(Command(type: "send", id: id, text: submitted))
         requestTimeout = Task { [weak self] in
@@ -193,6 +270,27 @@ final class AgentBridge {
             guard !Task.isCancelled, let self, pendingSend == id else { return }
             pendingSend = nil
             sendRejected = true
+        }
+    }
+
+    func setConfig(_ configID: String, value: String, from surface: PaneSurface) {
+        guard canSend(from: surface), !isBusy, !isWaiting, pendingSend == nil, pendingConfigRequest == nil,
+              let option = configOptions.first(where: { $0.id == configID }),
+              option.currentValue != value,
+              option.options.contains(where: { $0.value == value })
+        else { return }
+        let id = UUID()
+        configRejected = false
+        pendingConfigRequest = (id, configID)
+        pendingConfigID = configID
+        send(Command(type: "setConfig", id: id, configId: configID, value: value))
+        configTimeout?.cancel()
+        configTimeout = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(15))
+            guard !Task.isCancelled, let self, pendingConfigRequest?.id == id else { return }
+            pendingConfigRequest = nil
+            pendingConfigID = nil
+            configRejected = true
         }
     }
 
@@ -285,6 +383,7 @@ final class AgentBridge {
             }
             self.snapshot = nil
             applyStatus(event)
+            applyConfig(event)
             isReady = true
         case .status:
             applyStatus(event)
@@ -295,11 +394,26 @@ final class AgentBridge {
             sendRejected = event.accepted != true
             if !sendRejected { draft = "" }
             applyStatus(event)
+        case .config:
+            guard isReady else { return }
+            applyConfig(event)
+        case .configReply:
+            guard let id = event.id, pendingConfigRequest?.id == id else { return }
+            configTimeout?.cancel()
+            pendingConfigRequest = nil
+            pendingConfigID = nil
+            configRejected = event.accepted != true
+            applyConfig(event)
+            applyStatus(event)
         }
     }
 
     private func applyStatus(_ event: Event) {
         if let busy = event.busy { isBusy = busy }
         if let waiting = event.waiting { isWaiting = waiting }
+    }
+
+    private func applyConfig(_ event: Event) {
+        if let options = event.configOptions { configOptions = options }
     }
 }
