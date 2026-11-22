@@ -22,18 +22,34 @@ For a test without installation, run `pi -e /path/to/macterm-pi-bridge.ts` in th
 
 - Press <kbd>Return</kbd> to send a message. You can also click **Send**.
 - Press <kbd>Shift</kbd>+<kbd>Return</kbd> to add a new line.
-- Click **Stop** to stop the current turn. The Pi process stays open.
-- Click **Show Terminal** for approval requests, passwords, slash commands, and other Pi controls.
+- Click **Stop** to stop the current turn. The agent process stays open.
+- Click **Show Terminal** for approval requests, passwords, slash commands, and other terminal controls.
 - Click **Show Agent GUI** in the pane's top-right corner to show the same conversation again.
 
 Pi stores the conversation. Macterm reads the current branch from Pi and receives updates through a local socket. If the connection closes, the pane shows the terminal. If you quit and open Macterm again, the extension registers again when it finds the app's control socket.
 
-## Antigravity
+## ACP agents (OpenCode, Antigravity, and others)
 
-1. Install `agy` with ACP support and Node.js 22 or later.
-2. Run `agy acp --login` if Antigravity requires sign-in.
-3. Run `scripts/integrations/macterm-agy` from a local pane in a Macterm main window. Use the full script path if the pane opens in a different folder.
+`scripts/integrations/macterm-acp` bridges any ACP v1 stdio agent to a local pane in a Macterm main window. It needs Node.js 22 or later.
 
-The script starts `agy acp`. Macterm shows the conversation, replies, and tool updates. Click **Stop** to cancel the current turn. Click **Show Terminal** to answer permission requests or continue the conversation from the terminal. Enter `/exit` to close the conversation.
+### OpenCode
 
-To resume a conversation, pass `--conversation ID` to `macterm-agy`. The script prints the ID when it opens the conversation.
+1. Install `opencode` with ACP support (`opencode acp`) and sign in with `opencode auth login` if required.
+2. Run `scripts/integrations/macterm-opencode` (or `scripts/integrations/macterm-acp opencode`) from a local pane in a Macterm main window.
+
+### Antigravity
+
+1. Install `agy` with ACP support and run `agy acp --login` if Antigravity requires sign-in.
+2. Run `scripts/integrations/macterm-agy` (or `scripts/integrations/macterm-acp agy`) from a local pane in a Macterm main window.
+
+### Other ACP v1 agents
+
+Run any ACP v1 command after `--`:
+
+```sh
+scripts/integrations/macterm-acp --name "My Agent" -- my-agent acp
+```
+
+The bridge shows the conversation, replies, and tool updates in Macterm. Click **Stop** to cancel the current turn. Click **Show Terminal** to answer permission requests or continue the conversation from the terminal. Enter `/exit` to close the conversation.
+
+To resume a conversation, pass `--conversation ID` to `macterm-opencode`, `macterm-agy`, or `macterm-acp`. The bridge prints the ID when it opens the conversation.

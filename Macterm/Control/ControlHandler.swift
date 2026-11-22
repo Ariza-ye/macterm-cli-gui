@@ -121,8 +121,9 @@ final class ControlHandler {
         case "host.server": return try await hostServer(args)
         #endif
         case "ssh.askpass": return try await sshAskpass(args, peerPID: peerPID)
-        case "pi.register": return try registerAgent(session: args.session, registration: args.piBridge, provider: .pi)
-        case "agy.register": return try registerAgent(session: args.session, registration: args.agentBridge, provider: .antigravity)
+        case "pi.register": return try registerAgent(session: args.session, registration: args.piBridge, defaultProvider: .pi)
+        case "agy.register": return try registerAgent(session: args.session, registration: args.agentBridge, defaultProvider: .antigravity)
+        case "agent.register": return try registerAgent(session: args.session, registration: args.agentBridge, defaultProvider: nil)
         case "grid": return try grid(args)
         case "session.list": return try await sessionList()
         case "session.info": return try await sessionInfo(args)
@@ -147,9 +148,16 @@ final class ControlHandler {
     }
 
     private func registerAgent(
-        session: String?, registration: ControlAgentRegistration?, provider: AgentBridge.Provider
+        session: String?, registration: ControlAgentRegistration?, defaultProvider: AgentBridge.Provider?
     ) throws -> ControlData {
-        guard let session, !session.isEmpty, let registration,
+        let resolvedProvider: AgentBridge.Provider? = if let defaultProvider {
+            defaultProvider
+        } else if let raw = registration?.provider {
+            AgentBridge.Provider(identifier: raw)
+        } else {
+            nil
+        }
+        guard let session, !session.isEmpty, let registration, let provider = resolvedProvider,
               !registration.conversation.isEmpty, registration.conversation.utf8.count <= 256,
               AgentBridge.acceptsSocket(at: registration.socket, for: provider)
         else {

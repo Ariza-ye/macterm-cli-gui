@@ -5,14 +5,50 @@ import Network
 /// Each main window can show the conversation or the terminal independently.
 @MainActor @Observable
 final class AgentBridge {
-    enum Provider: String {
-        case pi = "Pi"
-        case antigravity = "Antigravity"
+    enum Provider: Equatable {
+        case pi
+        case antigravity
+        case opencode
+        case custom(String)
 
-        var socketPrefix: String {
+        var displayName: String {
             switch self {
-            case .pi: "pi"
-            case .antigravity: "agy"
+            case .pi: "Pi"
+            case .antigravity: "Antigravity"
+            case .opencode: "OpenCode"
+            case let .custom(name): name
+            }
+        }
+
+        var icon: AgentIcon? {
+            switch self {
+            case .pi: .pi
+            case .antigravity: .antigravity
+            case .opencode: .opencode
+            case let .custom(name): AgentIcon.match(processName: name)
+            }
+        }
+
+        var socketPrefixes: [String] {
+            switch self {
+            case .pi: ["pi", "agent"]
+            case .antigravity: ["agy", "agent"]
+            case .opencode: ["opencode", "agent"]
+            case .custom: ["agent"]
+            }
+        }
+
+        init?(identifier: String) {
+            let trimmed = identifier.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, trimmed.utf8.count <= 64,
+                  !trimmed.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
+            else { return nil }
+            switch trimmed.lowercased() {
+            case "pi": self = .pi
+            case "agy",
+                 "antigravity": self = .antigravity
+            case "opencode": self = .opencode
+            default: self = .custom(trimmed)
             }
         }
     }
@@ -94,8 +130,14 @@ final class AgentBridge {
 
     /// Only connect to a socket that the current user owns in a private folder.
     static func acceptsSocket(at path: String, for provider: Provider) -> Bool {
-        guard path.hasPrefix("/tmp/macterm-\(provider.socketPrefix)-"),
-              path.wholeMatch(of: #//tmp/macterm-(pi|agy)-[A-Za-z0-9]{6}/bridge\.sock/#) != nil
+        let suffix = "/bridge.sock"
+        guard path.hasSuffix(suffix),
+              provider.socketPrefixes.contains(where: { prefix in
+                  let head = "/tmp/macterm-\(prefix)-"
+                  guard path.hasPrefix(head) else { return false }
+                  let token = path.dropFirst(head.count).dropLast(suffix.count)
+                  return token.count == 6 && token.allSatisfy { $0.isASCII && ($0.isLetter || $0.isNumber) }
+              })
         else { return false }
         let directory = (path as NSString).deletingLastPathComponent
         var info = stat()

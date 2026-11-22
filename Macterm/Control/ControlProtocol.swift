@@ -41,6 +41,7 @@ enum ControlProtocol {
 }
 
 struct ControlAgentRegistration: Codable, Equatable {
+    var provider: String?
     var conversation: String
     var socket: String
     var token: UUID

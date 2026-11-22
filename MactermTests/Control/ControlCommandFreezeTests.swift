@@ -26,7 +26,7 @@ struct ControlCommandFreezeTests {
     ]
 
     /// The agent bridges use these private commands to register.
-    private static let integrationCommands: Set = ["pi.register", "agy.register"]
+    private static let integrationCommands: Set = ["pi.register", "agy.register", "agent.register"]
 
     @Test
     func control_socket_command_list_is_frozen() throws {

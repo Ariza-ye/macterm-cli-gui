@@ -15,7 +15,7 @@ struct AgentPaneView: View {
             VStack(spacing: 0) {
                 header
                 Rectangle().fill(MactermTheme.border).frame(height: 1).accessibilityHidden(true)
-                AgentTranscript(rows: bridge.rows, agentName: bridge.provider.rawValue)
+                AgentTranscript(rows: bridge.rows, agentName: bridge.provider.displayName)
                 composer(maxEditorHeight: min(240, max(36, pane.size.height * 0.4)))
             }
         }
@@ -27,11 +27,21 @@ struct AgentPaneView: View {
 
     private var header: some View {
         HStack(spacing: 8) {
-            Image(systemName: "bubble.left.and.text.bubble.right")
-                .font(.body.weight(.medium))
-                .foregroundStyle(MactermTheme.accent)
-                .accessibilityHidden(true)
-            Text(verbatim: bridge.provider.rawValue).font(.headline)
+            if let icon = bridge.provider.icon {
+                Image(icon.rawValue)
+                    .renderingMode(.template)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 16, height: 16)
+                    .foregroundStyle(icon.brandColor)
+                    .accessibilityHidden(true)
+            } else {
+                Image(systemName: "bubble.left.and.text.bubble.right")
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(MactermTheme.accent)
+                    .accessibilityHidden(true)
+            }
+            Text(verbatim: bridge.provider.displayName).font(.headline)
             Spacer(minLength: 4)
             if bridge.isWaiting {
                 Text("Continue in Terminal")

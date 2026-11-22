@@ -1,0 +1,4 @@
+#!/usr/bin/env node
+import { runCli } from "./acp-bridge.mjs";
+
+await runCli(process.argv.slice(2));
