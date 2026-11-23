@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmdirSync, statSync, unlinkSync } from "node:fs";
 import { createConnection, createServer } from "node:net";
-import { basename } from "node:path";
+import { basename, dirname } from "node:path";
 import { createInterface } from "node:readline";
 import { stripVTControlCharacters } from "node:util";
 
@@ -177,6 +177,44 @@ export function formatToolText(update, previous) {
     return "";
 }
 
+export function formatPermissionDetails(toolCall) {
+    if (!toolCall || typeof toolCall !== "object") return "";
+    if (toolCall.rawInput !== undefined && toolCall.rawInput !== null) {
+        const input = typeof toolCall.rawInput === "string"
+            ? toolCall.rawInput
+            : JSON.stringify(toolCall.rawInput, null, 2);
+        const cleaned = clean(input).trim();
+        if (cleaned) return cleaned.slice(0, 16 * 1024);
+    }
+    const details = Array.isArray(toolCall.content)
+        ? toolCall.content.flatMap(item => {
+            if (item?.type === "content" && item.content?.type === "text") return [item.content.text];
+            if (item?.type === "diff") return [item.path, item.newText];
+            return [];
+        }).filter(Boolean).join("\n")
+        : "";
+    return clean(details).trim().slice(0, 16 * 1024);
+}
+
+export function normalizePermissionOptions(rawOptions) {
+    if (!Array.isArray(rawOptions)) return [];
+    const seen = new Set();
+    const options = [];
+    for (const item of rawOptions) {
+        if (!item || typeof item.optionId !== "string" || !item.optionId || seen.has(item.optionId)) continue;
+        seen.add(item.optionId);
+        const option = {
+            optionId: item.optionId,
+            name: clean(item.name || item.optionId).slice(0, 256),
+        };
+        if (typeof item.kind === "string" && item.kind.trim()) {
+            option.kind = clean(item.kind).trim().slice(0, 64);
+        }
+        options.push(option);
+    }
+    return options;
+}
+
 export function parseBridgeArgs(argv, presetName) {
     if (presetName) {
         const preset = PRESETS[presetName];
@@ -265,9 +303,10 @@ export async function runAcpBridge(config, runtime = {}) {
     const startupTimeoutMs = runtime.startupTimeoutMs ?? 30000;
     const cwd = runtime.cwd ?? process.cwd();
     const pane = env.MACTERM_SESSION;
-    const control = env.MACTERM_AGENT_SOCKET || env.MACTERM_SOCKET;
+    const agentSocket = env.MACTERM_AGENT_SOCKET;
+    const controlSocket = env.MACTERM_SOCKET;
 
-    if (!pane || !control || (requireTTY && !inputStream.isTTY)) {
+    if (!pane || (!agentSocket && !controlSocket) || (requireTTY && !inputStream.isTTY)) {
         errorStream.write(`Run this bridge in a local pane in a Macterm main window.\n`);
         process.exitCode = 1;
         return;
@@ -332,8 +371,16 @@ export async function runAcpBridge(config, runtime = {}) {
         });
     }
 
+    function serializedPermissions() {
+        return Array.from(permissions.values(), entry => entry.payload);
+    }
+
     function state() {
-        return { busy: Boolean(turn), waiting: permissions.size > 0 };
+        return {
+            busy: Boolean(turn),
+            waiting: permissions.size > 0,
+            permissions: serializedPermissions(),
+        };
     }
 
     function emit(frame) {
@@ -387,22 +434,83 @@ export async function runAcpBridge(config, runtime = {}) {
     function showPermission() {
         const req = permissions.values().next().value;
         if (!req) return;
-        const { params } = req;
-        const title = clean(params.toolCall?.title) || "Tool";
-        writeOut(`\nPermission required for ${title}.\n`);
-        if (params.toolCall?.rawInput !== undefined) {
-            writeOut(`${clean(JSON.stringify(params.toolCall.rawInput, null, 2))}\n`);
+        writeOut(`\nPermission required for ${req.payload.title}.\n`);
+        if (req.payload.details) {
+            writeOut(`${req.payload.details}\n`);
         }
-        for (const [index, option] of params.options.entries()) {
-            writeOut(`${index + 1}. ${clean(option.name)}\n`);
+        for (const [index, option] of req.payload.options.entries()) {
+            writeOut(`${index + 1}. ${option.name}\n`);
         }
         writeOut("0. Cancel\n");
         terminal.setPrompt("Select an option> ");
         terminal.prompt();
     }
 
+    function enqueuePermission(rpcId, params) {
+        const permissionId = randomUUID();
+        const title = (clean(params.toolCall?.title) || clean(params.toolCall?.kind) || "Tool").slice(0, 512);
+        const details = formatPermissionDetails(params.toolCall);
+        const options = normalizePermissionOptions(params.options);
+        const payload = {
+            id: permissionId,
+            title,
+            ...(details ? { details } : {}),
+            options,
+        };
+        permissions.set(permissionId, { id: permissionId, rpcId, payload });
+        if (permissions.size === 1) showPermission();
+        status();
+    }
+
+    function resolvePermission(permissionId, optionId, owner, commandId) {
+        const reply = accepted => {
+            if (owner && owner === peer) {
+                emit({ type: "permissionReply", id: commandId, accepted, ...state() });
+            }
+        };
+        const req = permissions.get(permissionId);
+        if (!req) {
+            reply(false);
+            return;
+        }
+        let outcome;
+        let choiceLabel = "Cancelled";
+        if (optionId !== undefined && optionId !== null) {
+            if (typeof optionId !== "string") {
+                reply(false);
+                return;
+            }
+            const option = req.payload.options.find(item => item.optionId === optionId);
+            if (!option) {
+                reply(false);
+                return;
+            }
+            outcome = { outcome: "selected", optionId: option.optionId };
+            choiceLabel = option.name;
+        } else {
+            outcome = { outcome: "cancelled" };
+        }
+
+        const wasCurrent = permissions.keys().next().value === permissionId;
+        rpc({ id: req.rpcId, result: { outcome } });
+        permissions.delete(permissionId);
+        if (owner && !closed) {
+            writeOut(`\n${choiceLabel}\n`);
+        }
+        if (permissions.size > 0) {
+            if (wasCurrent) showPermission();
+        } else {
+            terminal.setPrompt(config.prompt);
+            if (!closed && !turn) terminal.prompt();
+        }
+        if (owner) reply(true);
+        else status();
+    }
+
     function cancelPermissions() {
-        for (const id of permissions.keys()) rpc({ id, result: { outcome: { outcome: "cancelled" } } });
+        for (const req of permissions.values()) {
+            rpc({ id: req.rpcId, result: { outcome: { outcome: "cancelled" } } });
+        }
         permissions.clear();
         terminal.setPrompt(config.prompt);
         status();
@@ -415,10 +523,8 @@ export async function runAcpBridge(config, runtime = {}) {
         const { id, method, params, result, error } = frame;
         if (method === "session/update" && (!sessionID || params?.sessionId === sessionID)) {
             update(params);
-        } else if (method === "session/request_permission" && params?.sessionId === sessionID) {
-            permissions.set(id, frame);
-            if (permissions.size === 1) showPermission();
-            status();
+        } else if (method === "session/request_permission" && id !== undefined && params?.sessionId === sessionID) {
+            enqueuePermission(id, params);
         } else if (method && id !== undefined) {
             rpc({ id, error: { code: -32601, message: "This client does not support the request." } });
         } else if (!method && inflight.has(id)) {
@@ -555,14 +661,9 @@ export async function runAcpBridge(config, runtime = {}) {
         if (permissions.size) {
             const req = permissions.values().next().value;
             const value = line.trim();
-            const option = /^\d+$/.test(value) ? req.params.options[Number(value) - 1] : undefined;
+            const option = /^\d+$/.test(value) ? req.payload.options[Number(value) - 1] : undefined;
             if (value !== "0" && !option) return showPermission();
-            const outcome = option ? { outcome: "selected", optionId: option.optionId } : { outcome: "cancelled" };
-            rpc({ id: req.id, result: { outcome } });
-            permissions.delete(req.id);
-            terminal.setPrompt(config.prompt);
-            status();
-            showPermission();
+            resolvePermission(req.id, option ? option.optionId : undefined);
         } else if (line === "/exit") {
             close();
         } else if (line === "/new") {
@@ -610,24 +711,38 @@ export async function runAcpBridge(config, runtime = {}) {
                 void setConfig(command.configId, command.value, socket, command.id);
             } else if (command?.type === "newConversation" && typeof command.id === "string") {
                 void newConversation(socket, command.id);
+            } else if (command?.type === "permissionReply" && typeof command.id === "string") {
+                resolvePermission(command.permissionId, command.optionId, socket, command.id);
             } else if (command?.type === "stop") {
                 stop();
             }
         });
     });
 
+    function resolveRegistrationSocket() {
+        if (agentSocket) return agentSocket;
+        if (!controlSocket) return undefined;
+        const sibling = `${dirname(controlSocket)}/agent.sock`;
+        try {
+            if (statSync(sibling).isSocket()) return sibling;
+        } catch {}
+        return controlSocket;
+    }
+
     function register() {
         if (!sessionID || peer || registration || closed) return;
+        const target = resolveRegistrationSocket();
+        if (!target) return;
         let identity;
         try {
-            const info = statSync(control);
+            const info = statSync(target);
             if (!info.isSocket()) return;
-            identity = `${info.dev}:${info.ino}:${info.birthtimeMs}`;
+            identity = `${target}:${info.dev}:${info.ino}:${info.birthtimeMs}`;
         } catch { return; }
         if (identity === boundSocket) return;
         const token = randomUUID();
         challenge = { token, identity };
-        const socket = createConnection(control);
+        const socket = createConnection(target);
         registration = socket;
         socket.setTimeout(3000);
         socket.once("connect", () => socket.end(JSON.stringify({

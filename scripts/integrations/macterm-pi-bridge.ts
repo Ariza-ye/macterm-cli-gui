@@ -2,6 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmdirSync, statSync, unlinkSync } from "node:fs";
 import { createConnection, createServer, type Socket } from "node:net";
+import { dirname } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 
 type Entry = ReturnType<ExtensionContext["sessionManager"]["getBranch"]>[number];
@@ -78,6 +79,16 @@ function messageRow(id: string, message: Message): Row | undefined {
     }
 }
 
+function resolveRegistrationSocket(agentSocket: string | undefined, controlSocket: string | undefined): string | undefined {
+    if (agentSocket) return agentSocket;
+    if (!controlSocket) return undefined;
+    const sibling = `${dirname(controlSocket)}/agent.sock`;
+    try {
+        if (statSync(sibling).isSocket()) return sibling;
+    } catch {}
+    return controlSocket;
+}
+
 export default function (pi: ExtensionAPI) {
     let runtime: ReturnType<typeof startBridge>;
     pi.registerCommand("macterm-new", {
@@ -92,9 +103,10 @@ export default function (pi: ExtensionAPI) {
     pi.on("session_start", (_event, ctx) => {
         runtime?.close();
         const session = process.env.MACTERM_SESSION;
-        const control = process.env.MACTERM_AGENT_SOCKET || process.env.MACTERM_SOCKET;
-        runtime = ctx.mode === "tui" && process.platform === "darwin" && session && control
-            ? startBridge(pi, ctx, session, control) : undefined;
+        const agentSocket = process.env.MACTERM_AGENT_SOCKET;
+        const controlSocket = process.env.MACTERM_SOCKET;
+        runtime = ctx.mode === "tui" && process.platform === "darwin" && session && (agentSocket || controlSocket)
+            ? startBridge(pi, ctx, session, agentSocket, controlSocket) : undefined;
     });
     pi.on("session_shutdown", () => { runtime?.close(); runtime = undefined; });
     pi.on("session_tree", () => { runtime?.snapshot(); });
@@ -119,7 +131,13 @@ export default function (pi: ExtensionAPI) {
     });
 }
 
-function startBridge(pi: ExtensionAPI, ctx: ExtensionContext, session: string, control: string) {
+function startBridge(
+    pi: ExtensionAPI,
+    ctx: ExtensionContext,
+    session: string,
+    agentSocket: string | undefined,
+    controlSocket: string | undefined,
+) {
     let directory: string;
     try { directory = mkdtempSync("/tmp/macterm-pi-"); } catch { return; }
     const path = `${directory}/bridge.sock`;
@@ -350,15 +368,17 @@ function startBridge(pi: ExtensionAPI, ctx: ExtensionContext, session: string, c
 
     function register() {
         if (closed || peer || registration) return;
+        const target = resolveRegistrationSocket(agentSocket, controlSocket);
+        if (!target) return;
         try {
-            const info = statSync(control);
+            const info = statSync(target);
             if (!info.isSocket()) return;
-            const identity = `${info.dev}:${info.ino}:${info.birthtimeMs}`;
+            const identity = `${target}:${info.dev}:${info.ino}:${info.birthtimeMs}`;
             if (identity === registeredSocket) return;
             registeringSocket = identity;
         } catch { return; }
         token = randomUUID();
-        const socket = createConnection(control);
+        const socket = createConnection(target);
         registration = socket;
         socket.unref().setTimeout(3000);
         socket.once("connect", () => socket.end(JSON.stringify({

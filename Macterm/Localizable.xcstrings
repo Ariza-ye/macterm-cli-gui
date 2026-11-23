@@ -7813,6 +7813,22 @@
         }
       }
     },
+    "Permission Required" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "권한 필요"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "需要权限"
+          }
+        }
+      }
+    },
     "Pin Tab" : {
       "localizations" : {
         "ko" : {
@@ -11153,6 +11169,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Agent 未确认收到消息。"
+          }
+        }
+      }
+    },
+    "The agent did not confirm the permission response." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "에이전트가 권한 응답을 확인하지 않았습니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agent 未确认权限回复。"
           }
         }
       }

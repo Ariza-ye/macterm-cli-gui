@@ -20,8 +20,28 @@ struct AgentPaneView: View {
                     agentName: bridge.provider.displayName,
                     isPendingSend: bridge.pendingSend != nil,
                     isBusy: bridge.isBusy,
-                    isWaiting: bridge.isWaiting
+                    isWaiting: bridge.isWaiting,
+                    hasPendingPermission: !bridge.pendingPermissions.isEmpty
                 )
+                if let permission = bridge.pendingPermissions.first {
+                    AgentPermissionCard(
+                        request: permission,
+                        remainingCount: bridge.pendingPermissions.count - 1,
+                        isPending: bridge.pendingPermissionID == permission.id,
+                        isDisabled: surface.isReadOnly || !bridge.isReady || bridge.pendingPermissionID != nil,
+                        isRejected: bridge.permissionRejected,
+                        onSelect: { optionID in
+                            bridge.respondToPermission(permission.id, optionID: optionID, from: surface)
+                        },
+                        onCancel: {
+                            bridge.respondToPermission(permission.id, optionID: nil, from: surface)
+                        }
+                    )
+                    .frame(maxWidth: agentColumnWidth)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 4)
+                    .padding(.bottom, 4)
+                }
                 composer(maxEditorHeight: min(240, max(36, pane.size.height * 0.4)))
             }
         }
@@ -49,7 +69,12 @@ struct AgentPaneView: View {
             }
             Text(verbatim: bridge.provider.displayName).font(.headline)
             Spacer(minLength: 4)
-            if bridge.isWaiting {
+            if !bridge.pendingPermissions.isEmpty {
+                Text("Permission Required")
+                    .font(.caption)
+                    .foregroundStyle(MactermTheme.warning)
+                    .lineLimit(1)
+            } else if bridge.isWaiting {
                 Text("Continue in Terminal")
                     .font(.caption)
                     .foregroundStyle(MactermTheme.warning)
@@ -496,12 +521,176 @@ private func groupedAgentChoices(
     return groups
 }
 
+private struct AgentPermissionCard: View {
+    let request: AgentBridge.PermissionRequest
+    let remainingCount: Int
+    let isPending: Bool
+    let isDisabled: Bool
+    let isRejected: Bool
+    let onSelect: (String) -> Void
+    let onCancel: () -> Void
+
+    private var primaryOptionID: String? {
+        if let allowOnce = request.options.first(where: { $0.kind == .allowOnce }) {
+            return allowOnce.optionId
+        }
+        if let allowAlways = request.options.first(where: { $0.kind == .allowAlways }) {
+            return allowAlways.optionId
+        }
+        if request.options.allSatisfy({ $0.kind == nil }) {
+            return request.options.first?.optionId
+        }
+        return nil
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "hand.raised.fill")
+                    .font(.callout)
+                    .foregroundStyle(MactermTheme.warning)
+                    .accessibilityHidden(true)
+                Text(verbatim: request.title)
+                    .font(.callout.weight(.semibold))
+                    .lineLimit(2)
+                Spacer(minLength: 4)
+                if remainingCount > 0 {
+                    Text(verbatim: "+\(remainingCount)")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(MactermTheme.fgMuted)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(MactermTheme.bg, in: Capsule())
+                }
+                if isPending {
+                    ProgressView().controlSize(.mini)
+                }
+            }
+
+            if let details = request.details, !details.isEmpty {
+                let detailsText = Text(verbatim: details)
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(8)
+                ViewThatFits(in: .vertical) {
+                    detailsText
+                    ScrollView {
+                        detailsText
+                    }
+                }
+                .frame(maxHeight: 140)
+                .background(MactermTheme.bg, in: RoundedRectangle(cornerRadius: 8))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8).strokeBorder(MactermTheme.border).allowsHitTesting(false)
+                }
+            }
+
+            if isRejected {
+                Text("The agent did not confirm the permission response.")
+                    .font(.caption)
+                    .foregroundStyle(MactermTheme.failure)
+            }
+
+            AgentPermissionActionLayout(horizontalSpacing: 8, verticalSpacing: 6) {
+                ForEach(request.options) { option in
+                    optionButton(option, isPrimary: option.optionId == primaryOptionID)
+                }
+                Button(action: onCancel) {
+                    Text("Cancel")
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(isDisabled)
+                .fixedSize()
+                .pointingHandCursor(!isDisabled)
+            }
+        }
+        .padding(12)
+        .background(MactermTheme.surface, in: RoundedRectangle(cornerRadius: 12))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(MactermTheme.warning.opacity(0.45))
+                .allowsHitTesting(false)
+        }
+    }
+
+    @ViewBuilder
+    private func optionButton(_ option: AgentBridge.PermissionRequest.Option, isPrimary: Bool) -> some View {
+        let button = Button {
+            onSelect(option.optionId)
+        } label: {
+            Text(verbatim: option.name)
+        }
+        .controlSize(.small)
+        .disabled(isDisabled)
+        .fixedSize()
+        .pointingHandCursor(!isDisabled)
+
+        if isPrimary {
+            button.buttonStyle(.borderedProminent)
+        } else {
+            button.buttonStyle(.bordered)
+        }
+    }
+}
+
+private struct AgentPermissionActionLayout: Layout {
+    let horizontalSpacing: CGFloat
+    let verticalSpacing: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache _: inout ()) -> CGSize {
+        let maxWidth = proposal.width ?? .infinity
+        var lineWidth: CGFloat = 0
+        var lineHeight: CGFloat = 0
+        var totalWidth: CGFloat = 0
+        var totalHeight: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if lineWidth > 0, lineWidth + horizontalSpacing + size.width > maxWidth {
+                totalWidth = max(totalWidth, lineWidth)
+                totalHeight += lineHeight + verticalSpacing
+                lineWidth = size.width
+                lineHeight = size.height
+            } else {
+                if lineWidth > 0 { lineWidth += horizontalSpacing }
+                lineWidth += size.width
+                lineHeight = max(lineHeight, size.height)
+            }
+        }
+        totalWidth = max(totalWidth, lineWidth)
+        totalHeight += lineHeight
+        return CGSize(width: totalWidth, height: totalHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal _: ProposedViewSize, subviews: Subviews, cache _: inout ()) {
+        var x = bounds.minX
+        var y = bounds.minY
+        var lineHeight: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+            if x > bounds.minX, x + size.width > bounds.maxX + 0.5 {
+                x = bounds.minX
+                y += lineHeight + verticalSpacing
+                lineHeight = 0
+            }
+            subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+            x += size.width + horizontalSpacing
+            lineHeight = max(lineHeight, size.height)
+        }
+    }
+}
+
 private struct AgentTranscript: View {
     let rows: [AgentBridge.Row]
     let agentName: String
     let isPendingSend: Bool
     let isBusy: Bool
     let isWaiting: Bool
+    let hasPendingPermission: Bool
 
     private var isWorking: Bool {
         isPendingSend || isBusy || isWaiting
@@ -528,7 +717,7 @@ private struct AgentTranscript: View {
                                 message(
                                     row,
                                     width: columnWidth,
-                                    isStreaming: isWorking && !isWaiting && entry.id == lastEntry?.id
+                                    isStreaming: isWorking && !isWaiting && !hasPendingPermission && entry.id == lastEntry?.id
                                 )
                             case let .tools(rows):
                                 AgentToolGroup(rows: rows)
@@ -553,6 +742,7 @@ private struct AgentTranscript: View {
 
     private func showsStandaloneProgress(after lastEntry: Entry?) -> Bool {
         guard isWorking else { return false }
+        if hasPendingPermission { return false }
         if isWaiting { return true }
         if isAssistantEntry(lastEntry) { return false }
         if case let .tools(toolRows) = lastEntry, toolRows.contains(where: { $0.status == .running }) {

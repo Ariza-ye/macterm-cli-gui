@@ -125,6 +125,33 @@ final class AgentBridge {
         }
     }
 
+    struct PermissionRequest: Decodable, Identifiable, Equatable {
+        enum OptionKind: String, Decodable, Equatable {
+            case allowOnce = "allow_once"
+            case allowAlways = "allow_always"
+            case rejectOnce = "reject_once"
+            case rejectAlways = "reject_always"
+            case other
+
+            init(from decoder: Decoder) throws {
+                let raw = try decoder.singleValueContainer().decode(String.self)
+                self = Self(rawValue: raw) ?? .other
+            }
+        }
+
+        struct Option: Decodable, Identifiable, Equatable {
+            var id: String { optionId }
+            let optionId: String
+            let name: String
+            var kind: OptionKind?
+        }
+
+        let id: String
+        let title: String
+        var details: String?
+        let options: [Option]
+    }
+
     private struct Event: Decodable {
         enum Kind: String, Decodable {
             case snapshot
@@ -135,6 +162,7 @@ final class AgentBridge {
             case config
             case configReply
             case newConversationReply
+            case permissionReply
         }
 
         let type: Kind
@@ -145,6 +173,7 @@ final class AgentBridge {
         var id: UUID?
         var accepted: Bool?
         var configOptions: [ConfigOption]?
+        var permissions: [PermissionRequest]?
     }
 
     private struct Command: Encodable {
@@ -154,10 +183,13 @@ final class AgentBridge {
         var text: String?
         var configId: String?
         var value: String?
+        var permissionId: String?
+        var optionId: String?
     }
 
     private(set) var rows: [Row] = []
     private(set) var configOptions: [ConfigOption] = []
+    private(set) var pendingPermissions: [PermissionRequest] = []
     private(set) var conversation: String
     private(set) var isReady = false
     private(set) var isBusy = false
@@ -168,6 +200,8 @@ final class AgentBridge {
     private(set) var configRejected = false
     private(set) var pendingNewConversation: UUID?
     private(set) var newConversationRejected = false
+    private(set) var pendingPermissionID: String?
+    private(set) var permissionRejected = false
     var draft = ""
 
     /// Transcript rows including an optimistic user bubble while waiting for the bridge to echo it.
@@ -203,6 +237,8 @@ final class AgentBridge {
     private var pendingConfigRequest: (id: UUID, configID: String)?
     private var configTimeout: Task<Void, Never>?
     private var newConversationTimeout: Task<Void, Never>?
+    private var pendingPermissionRequest: (id: UUID, permissionID: String)?
+    private var permissionTimeout: Task<Void, Never>?
     private var onClose: (() -> Void)?
     private static let maxFrameBytes = 1 << 20
 
@@ -271,9 +307,14 @@ final class AgentBridge {
         pendingConfigRequest = nil
         pendingConfigID = nil
         pendingNewConversation = nil
+        pendingPermissions = []
+        pendingPermissionRequest = nil
+        pendingPermissionID = nil
+        permissionRejected = false
         requestTimeout?.cancel()
         configTimeout?.cancel()
         newConversationTimeout?.cancel()
+        permissionTimeout?.cancel()
         connection.cancel()
         onClose?()
         onClose = nil
@@ -345,8 +386,32 @@ final class AgentBridge {
         }
     }
 
+    func respondToPermission(_ permissionID: String, optionID: String?, from surface: PaneSurface) {
+        guard canSend(from: surface), isReady, pendingPermissionRequest == nil,
+              let request = pendingPermissions.first(where: { $0.id == permissionID })
+        else { return }
+        if let optionID, !request.options.contains(where: { $0.optionId == optionID }) {
+            return
+        }
+        let id = UUID()
+        permissionRejected = false
+        pendingPermissionRequest = (id, permissionID)
+        pendingPermissionID = permissionID
+        send(Command(type: "permissionReply", id: id, permissionId: permissionID, optionId: optionID))
+        permissionTimeout?.cancel()
+        permissionTimeout = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(15))
+            guard !Task.isCancelled, let self, pendingPermissionRequest?.id == id else { return }
+            pendingPermissionRequest = nil
+            pendingPermissionID = nil
+            if pendingPermissions.contains(where: { $0.id == permissionID }) {
+                permissionRejected = true
+            }
+        }
+    }
+
     func stop(from surface: PaneSurface) {
-        guard canSend(from: surface), isBusy else { return }
+        guard canSend(from: surface), isBusy || isWaiting else { return }
         send(Command(type: "stop"))
     }
 
@@ -445,6 +510,9 @@ final class AgentBridge {
             }
             self.snapshot = nil
             optimisticUserRow = nil
+            if event.permissions == nil {
+                clearPendingPermissions()
+            }
             applyStatus(event)
             applyConfig(event)
             isReady = true
@@ -487,10 +555,26 @@ final class AgentBridge {
                 optimisticUserRow = nil
                 sendRejected = false
                 configRejected = false
+                clearPendingPermissions()
             }
             applyConfig(event)
             applyStatus(event)
+        case .permissionReply:
+            guard let id = event.id, let pending = pendingPermissionRequest, pending.id == id else { return }
+            permissionTimeout?.cancel()
+            pendingPermissionRequest = nil
+            pendingPermissionID = nil
+            applyStatus(event)
+            permissionRejected = event.accepted != true && pendingPermissions.contains { $0.id == pending.permissionID }
         }
+    }
+
+    private func clearPendingPermissions() {
+        pendingPermissions = []
+        pendingPermissionRequest = nil
+        pendingPermissionID = nil
+        permissionRejected = false
+        permissionTimeout?.cancel()
     }
 
     private func failPendingSend() {
@@ -510,6 +594,17 @@ final class AgentBridge {
             if !busy, pendingSend == nil { optimisticUserRow = nil }
         }
         if let waiting = event.waiting { isWaiting = waiting }
+        if let permissions = event.permissions {
+            if permissions != pendingPermissions {
+                permissionRejected = false
+            }
+            pendingPermissions = permissions
+            if let pending = pendingPermissionRequest, !permissions.contains(where: { $0.id == pending.permissionID }) {
+                permissionTimeout?.cancel()
+                pendingPermissionRequest = nil
+                pendingPermissionID = nil
+            }
+        }
     }
 
     private func applyConfig(_ event: Event) {

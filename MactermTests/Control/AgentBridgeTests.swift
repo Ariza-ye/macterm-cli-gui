@@ -612,6 +612,134 @@ struct AgentBridgeTests {
         #expect(bridge.draft == "Will be rejected")
     }
 
+    // MARK: - Permissions
+
+    @Test
+    func bridge_syncs_and_resolves_permissions_over_socket() async throws {
+        let (_, registry, appState, projectStore) = makeHandler()
+        let pane = try seedPane(appState, projectStore)
+        let windowID = UUID()
+        let surface = SurfaceRegistry.shared.surface(for: pane, in: .window(windowID))
+        defer {
+            registry.disconnect(pane: pane)
+            SurfaceRegistry.shared.destroySurfaces(of: pane)
+        }
+
+        let (socketPath, serverFD, cleanup) = try makeListeningBridgeSocket(prefix: "agent")
+        defer { cleanup() }
+
+        let bridge = AgentBridge(
+            provider: .antigravity,
+            path: socketPath,
+            conversation: "conv-perm",
+            token: UUID(),
+            windowID: windowID,
+            registry: registry
+        )
+        registry.bind(bridge, toSession: pane.sessionName)
+
+        let peerFD = try await acceptClient(on: serverFD)
+        defer { close(peerFD) }
+        _ = try await readLine(from: peerFD) // hello
+
+        let firstPermission: [String: Any] = [
+            "id": "perm-1",
+            "title": "Run command",
+            "details": "{\n  \"command\": \"ls -la\"\n}",
+            "options": [
+                ["optionId": "allow-once", "name": "Allow", "kind": "allow_once"],
+                ["optionId": "reject-once", "name": "Deny", "kind": "reject_once"],
+            ],
+        ]
+        let secondPermission: [String: Any] = [
+            "id": "perm-2",
+            "title": "Write file",
+            "options": [
+                ["optionId": "allow-always", "name": "Always Allow", "kind": "allow_always"],
+                ["optionId": "reject-once", "name": "Deny", "kind": "reject_once"],
+            ],
+        ]
+
+        // Snapshot includes an already-pending permission queue.
+        try writeFrame(["type": "snapshot", "conversation": "conv-perm"], to: peerFD)
+        try writeFrame([
+            "type": "snapshotEnd",
+            "busy": true,
+            "waiting": true,
+            "permissions": [firstPermission, secondPermission],
+        ], to: peerFD)
+
+        try await waitUntil { bridge.isReady && bridge.pendingPermissions.count == 2 }
+        #expect(bridge.pendingPermissions[0].id == "perm-1")
+        #expect(bridge.pendingPermissions[0].title == "Run command")
+        #expect(bridge.pendingPermissions[0].details == "{\n  \"command\": \"ls -la\"\n}")
+        #expect(bridge.pendingPermissions[0].options.map(\.kind) == [.allowOnce, .rejectOnce])
+
+        // Invalid option ID and read-only surface are ignored.
+        bridge.respondToPermission("perm-1", optionID: "nonexistent", from: surface)
+        #expect(bridge.pendingPermissionID == nil)
+        surface.isReadOnly = true
+        bridge.respondToPermission("perm-1", optionID: "allow-once", from: surface)
+        #expect(bridge.pendingPermissionID == nil)
+        surface.isReadOnly = false
+
+        // Select an option for the first permission.
+        bridge.respondToPermission("perm-1", optionID: "allow-once", from: surface)
+        #expect(bridge.pendingPermissionID == "perm-1")
+
+        let replyLine1 = try await readLine(from: peerFD)
+        let replyCmd1 = try #require(JSONSerialization.jsonObject(with: Data(replyLine1.utf8)) as? [String: Any])
+        #expect(replyCmd1["type"] as? String == "permissionReply")
+        #expect(replyCmd1["permissionId"] as? String == "perm-1")
+        #expect(replyCmd1["optionId"] as? String == "allow-once")
+        let replyID1 = try #require(replyCmd1["id"] as? String)
+
+        try writeFrame([
+            "type": "permissionReply",
+            "id": replyID1,
+            "accepted": true,
+            "busy": true,
+            "waiting": true,
+            "permissions": [secondPermission],
+        ], to: peerFD)
+
+        try await waitUntil { bridge.pendingPermissionID == nil && bridge.pendingPermissions.count == 1 }
+        #expect(bridge.pendingPermissions[0].id == "perm-2")
+        #expect(!bridge.permissionRejected)
+
+        // Rejected reply while permission remains pending sets permissionRejected.
+        bridge.respondToPermission("perm-2", optionID: nil, from: surface)
+        let replyLine2 = try await readLine(from: peerFD)
+        let replyCmd2 = try #require(JSONSerialization.jsonObject(with: Data(replyLine2.utf8)) as? [String: Any])
+        #expect(replyCmd2["type"] as? String == "permissionReply")
+        #expect(replyCmd2["permissionId"] as? String == "perm-2")
+        #expect(replyCmd2["optionId"] == nil)
+        let replyID2 = try #require(replyCmd2["id"] as? String)
+
+        try writeFrame([
+            "type": "permissionReply",
+            "id": replyID2,
+            "accepted": false,
+            "busy": true,
+            "waiting": true,
+            "permissions": [secondPermission],
+        ], to: peerFD)
+
+        try await waitUntil { bridge.pendingPermissionID == nil && bridge.permissionRejected }
+        #expect(bridge.pendingPermissions.count == 1)
+
+        // Terminal resolving the permission clears pendingPermissions and permissionRejected.
+        try writeFrame([
+            "type": "status",
+            "busy": false,
+            "waiting": false,
+            "permissions": [],
+        ], to: peerFD)
+
+        try await waitUntil { bridge.pendingPermissions.isEmpty && !bridge.isWaiting }
+        #expect(!bridge.permissionRejected)
+    }
+
     private func makeListeningBridgeSocket(prefix: String) throws -> (String, Int32, () -> Void) {
         let token = String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(6))
         let directory = "/tmp/macterm-\(prefix)-\(token)"
