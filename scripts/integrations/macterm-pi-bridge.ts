@@ -92,7 +92,7 @@ export default function (pi: ExtensionAPI) {
     pi.on("session_start", (_event, ctx) => {
         runtime?.close();
         const session = process.env.MACTERM_SESSION;
-        const control = process.env.MACTERM_SOCKET;
+        const control = process.env.MACTERM_AGENT_SOCKET || process.env.MACTERM_SOCKET;
         runtime = ctx.mode === "tui" && process.platform === "darwin" && session && control
             ? startBridge(pi, ctx, session, control) : undefined;
     });

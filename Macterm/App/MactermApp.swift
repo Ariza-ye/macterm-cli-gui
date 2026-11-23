@@ -443,7 +443,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // get a `starting` error until installResponders attaches the
         // handler.
         controlServer.start()
-        AgentInterceptStore.shared.syncShellScripts()
+        AgentRuntime.shared.start()
         // Connect to the session server early: this replaces a server that
         // an older build left running (design/002) before most panes ask it
         // for their sessions. A pane's `zmx connect` starts the server too,
@@ -892,6 +892,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let handler = ControlHandler(appState: appState, projectStore: projectStore)
         controlHandler = handler
         controlServer.attach { raw, peer in await handler.handle(raw, peerPID: peer) }
+        AgentRuntime.shared.attach(appState: appState)
         // A master that exits takes its login questions with it.
         SSHConnections.shared.onConnectionExit = { SSHLoginPrompts.shared.cancel(sshPID: $0) }
         SSHConnections.shared.onLoginNotice = { SSHLoginPrompts.shared.showNotice(host: $0, sshPID: $1, line: $2) }
@@ -947,6 +948,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_: Notification) {
         controlServer.stop()
+        AgentRuntime.shared.stop()
         // A master that logged in stays for the next launch.
         SSHConnections.shared.endLogins()
         onTerminate?()

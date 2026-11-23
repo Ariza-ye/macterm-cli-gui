@@ -2,10 +2,14 @@
 # Sourced during Ghostty's first fish_prompt setup after config.fish loads.
 
 function __macterm_sync_intercept --on-event fish_prompt
-    if not set -q MACTERM_SOCKET; or test -z "$MACTERM_SOCKET"
+    set -l __macterm_sock "$MACTERM_AGENT_SOCKET"
+    if test -z "$__macterm_sock"
+        set __macterm_sock "$MACTERM_SOCKET"
+    end
+    if test -z "$__macterm_sock"
         return
     end
-    set -l __macterm_dir (string replace -r '/[^/]+$' '' -- "$MACTERM_SOCKET")
+    set -l __macterm_dir (string replace -r '/[^/]+$' '' -- "$__macterm_sock")
     set -l __macterm_file "$__macterm_dir/agent-intercept.fish"
     if not test -r "$__macterm_file"
         return

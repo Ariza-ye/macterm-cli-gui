@@ -489,7 +489,7 @@ final class SurfaceRegistry {
     /// Call when the pane leaves the tree for good, or for a remote reconnect.
     /// Safe to call more than once. The surfaces stay, with no view.
     func destroySurfaces(of pane: Pane) {
-        pane.disconnectAgent()
+        AgentRegistry.shared.disconnect(pane: pane)
         let all = entries[pane.id]?.surfaces ?? []
         pane.surfacesWillTearDown(hadView: all.contains { $0.nsView != nil })
         for surface in all {

@@ -286,7 +286,7 @@ enum AgentInterceptShellGenerator {
     private static func posixWrapperBody(command: String, executable: String, invocation: String) -> [String] {
         let envReady = [
             "-z \"${MACTERM_NO_AGENT_GUI:-}\"",
-            "-n \"${MACTERM_SOCKET:-}\"",
+            "-n \"${MACTERM_AGENT_SOCKET:-${MACTERM_SOCKET:-}}\"",
             "-n \"${MACTERM_SESSION:-}\"",
             "-t 0",
             "-t 1",
@@ -327,7 +327,7 @@ enum AgentInterceptShellGenerator {
 
         let envReady = [
             "test -z \"$MACTERM_NO_AGENT_GUI\"",
-            "test -n \"$MACTERM_SOCKET\"",
+            "begin; test -n \"$MACTERM_AGENT_SOCKET\"; or test -n \"$MACTERM_SOCKET\"; end",
             "test -n \"$MACTERM_SESSION\"",
             "isatty stdin",
             "isatty stdout",

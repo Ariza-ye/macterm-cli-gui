@@ -6,7 +6,7 @@ This file loads when you work in `Macterm/Control/`. The root `AGENTS.md` has th
 
 A bundled CLI controls the app over `<App Support>/control.sock` (target `MactermCLI`, and `PRODUCT_MODULE_NAME` must stay `MactermCLI`). Xcode copies it to `Contents/Resources/bin/macterm`. Every pane gets it in `PATH`, together with `MACTERM_SOCKET` and `MACTERM_SESSION`. The full grammar is in `80-cli.md` (in the docs of `macterm/website`).
 
-**The CLI commands on `control.sock` are frozen** (design/011). A new CLI verb goes into the server protocol as an app action that the server relays to the app. `agent.register` (along with the legacy `pi.register` and `agy.register`) is a private command for agent GUI integrations. Each opens a separate local connection for one pane (`AgentBridge`). `ControlCommandFreezeTests` pins both lists.
+**`control.sock` is frozen** (design/011). Do not add a command to it. A new verb goes into the server protocol as an app action that the server relays to the app. `ControlCommandFreezeTests` pins the list of commands.
 
 The verbs:
 

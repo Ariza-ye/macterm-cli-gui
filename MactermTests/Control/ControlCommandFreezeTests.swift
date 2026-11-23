@@ -25,15 +25,11 @@ struct ControlCommandFreezeTests {
         "palette.list",
     ]
 
-    /// The agent bridges use these private commands to register.
-    private static let integrationCommands: Set = ["pi.register", "agy.register", "agent.register"]
-
     @Test
     func control_socket_command_list_is_frozen() throws {
         let commands = try Self.dispatchedCommands()
-        let expected = Self.frozenCommands.union(Self.integrationCommands)
-        let added = commands.subtracting(expected).sorted()
-        let removed = expected.subtracting(commands).sorted()
+        let added = commands.subtracting(Self.frozenCommands).sorted()
+        let removed = Self.frozenCommands.subtracting(commands).sorted()
         #expect(
             added.isEmpty,
             """

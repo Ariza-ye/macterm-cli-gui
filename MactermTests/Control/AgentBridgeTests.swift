@@ -16,12 +16,13 @@ struct AgentBridgeTests {
         )
     }
 
-    private func makeHandler() -> (ControlHandler, AppState, ProjectStore) {
+    private func makeHandler() -> (AgentRegistrationHandler, AgentRegistry, AppState, ProjectStore) {
         let appState = makeAppState()
         let projectStore = ProjectStore(fileURL: FileManager.default.temporaryDirectory
             .appendingPathComponent("macterm-agent-tests-store-\(UUID().uuidString).json"))
-        let handler = ControlHandler(appState: appState, projectStore: projectStore) { _, _ in .unreachable }
-        return (handler, appState, projectStore)
+        let registry = AgentRegistry()
+        let handler = AgentRegistrationHandler(appState: appState, registry: registry)
+        return (handler, registry, appState, projectStore)
     }
 
     private func seedPane(_ appState: AppState, _ projectStore: ProjectStore) throws -> Pane {
@@ -117,63 +118,112 @@ struct AgentBridgeTests {
         #expect(!AgentBridge.acceptsSocket(at: worldReadable, for: .opencode))
     }
 
-    // MARK: - ControlHandler registration
+    // MARK: - AgentRegistrationHandler & AgentRegistrationServer
 
     @Test
-    func agent_register_binds_opencode_and_custom_providers() async throws {
-        let (handler, appState, projectStore) = makeHandler()
+    func agent_register_binds_opencode_and_custom_providers() throws {
+        let (handler, registry, appState, projectStore) = makeHandler()
         let pane = try seedPane(appState, projectStore)
         let (socketPath, cleanup) = try makeBridgeSocket(prefix: "agent")
         defer {
-            pane.disconnectAgent()
+            registry.disconnect(pane: pane)
             cleanup()
         }
 
-        var args = ControlArgs(session: pane.sessionName)
-        args.agentBridge = ControlAgentRegistration(
+        let response = handler.handle(AgentRegistrationRequest(
+            session: pane.sessionName,
             provider: "opencode",
             conversation: "conv-1",
             socket: socketPath,
             token: UUID()
-        )
-        let response = await handler.handle(ControlRequest(command: "agent.register", args: args))
+        ))
         #expect(response.ok)
-        #expect(pane.agentBridge?.provider == .opencode)
+        #expect(registry.bridge(for: pane)?.provider == .opencode)
 
-        args.agentBridge = ControlAgentRegistration(
+        let customResponse = handler.handle(AgentRegistrationRequest(
+            session: pane.sessionName,
             provider: "Codex",
             conversation: "conv-2",
             socket: socketPath,
             token: UUID()
-        )
-        let customResponse = await handler.handle(ControlRequest(command: "agent.register", args: args))
+        ))
         #expect(customResponse.ok)
-        #expect(pane.agentBridge?.provider == .custom("Codex"))
+        #expect(registry.bridge(for: pane)?.provider == .custom("Codex"))
     }
 
     @Test
-    func agent_register_requires_provider_while_legacy_commands_keep_defaults() async throws {
-        let (handler, appState, projectStore) = makeHandler()
+    func agent_register_requires_provider_while_legacy_commands_keep_defaults() throws {
+        let (handler, registry, appState, projectStore) = makeHandler()
         let pane = try seedPane(appState, projectStore)
         let (agySocket, cleanupAgy) = try makeBridgeSocket(prefix: "agy")
         defer {
-            pane.disconnectAgent()
+            registry.disconnect(pane: pane)
             cleanupAgy()
         }
 
-        var missingProviderArgs = ControlArgs(session: pane.sessionName)
-        missingProviderArgs.agentBridge = ControlAgentRegistration(
+        let rejected = handler.handle(AgentRegistrationRequest(
+            session: pane.sessionName,
             conversation: "conv-missing",
             socket: agySocket,
             token: UUID()
-        )
-        let rejected = await handler.handle(ControlRequest(command: "agent.register", args: missingProviderArgs))
+        ))
         #expect(!rejected.ok)
-        #expect(rejected.error?.code == .badRequest)
+        #expect(rejected.error?.code == "bad_request")
 
-        let legacyResponse = await handler.handle(ControlRequest(command: "agy.register", args: missingProviderArgs))
+        let legacyPayload = try JSONSerialization.data(withJSONObject: [
+            "v": 1,
+            "id": UUID().uuidString,
+            "command": "agy.register",
+            "args": [
+                "session": pane.sessionName,
+                "agentBridge": [
+                    "conversation": "conv-legacy",
+                    "socket": agySocket,
+                    "token": UUID().uuidString,
+                ],
+            ],
+        ])
+        let legacyDecoded = try #require(AgentRegistrationRequest.decode(legacyPayload))
+        let legacyResponse = handler.handle(legacyDecoded)
         #expect(legacyResponse.ok)
-        #expect(pane.agentBridge?.provider == .antigravity)
+        #expect(registry.bridge(for: pane)?.provider == .antigravity)
+    }
+
+    @Test
+    func agent_registration_server_accepts_socket_registration_round_trip() async throws {
+        let (handler, registry, appState, projectStore) = makeHandler()
+        let pane = try seedPane(appState, projectStore)
+        let (bridgeSocketPath, cleanupBridge) = try makeBridgeSocket(prefix: "agent")
+        let serverDir = "/tmp/macterm-reg-test-\(UUID().uuidString.prefix(8))"
+        let serverSocketPath = "\(serverDir)/agent.sock"
+        let server = AgentRegistrationServer(socketPath: serverSocketPath)
+        server.attach { raw in handler.handle(raw) }
+        server.start()
+        defer {
+            registry.disconnect(pane: pane)
+            server.stop()
+            try? FileManager.default.removeItem(atPath: serverDir)
+            cleanupBridge()
+        }
+
+        let payload = try JSONSerialization.data(withJSONObject: [
+            "v": 1,
+            "id": UUID().uuidString,
+            "command": "agent.register",
+            "args": [
+                "session": pane.sessionName,
+                "agentBridge": [
+                    "provider": "opencode",
+                    "conversation": "conv-sock",
+                    "socket": bridgeSocketPath,
+                    "token": UUID().uuidString,
+                ],
+            ],
+        ])
+        let replyData = try await sendUnixLine(payload, to: serverSocketPath)
+        let reply = try JSONDecoder().decode(AgentRegistrationResponse.self, from: replyData)
+        #expect(reply.ok)
+        #expect(registry.bridge(for: pane)?.provider == .opencode)
     }
 
     // MARK: - Model & speed configuration
@@ -233,12 +283,12 @@ struct AgentBridgeTests {
 
     @Test
     func bridge_syncs_and_switches_model_and_speed_over_socket() async throws {
-        let (_, appState, projectStore) = makeHandler()
+        let (_, registry, appState, projectStore) = makeHandler()
         let pane = try seedPane(appState, projectStore)
         let windowID = UUID()
         let surface = SurfaceRegistry.shared.surface(for: pane, in: .window(windowID))
         defer {
-            pane.disconnectAgent()
+            registry.disconnect(pane: pane)
             SurfaceRegistry.shared.destroySurfaces(of: pane)
         }
 
@@ -251,9 +301,10 @@ struct AgentBridgeTests {
             path: socketPath,
             conversation: "conv-config",
             token: token,
-            windowID: windowID
+            windowID: windowID,
+            registry: registry
         )
-        pane.bindAgent(bridge)
+        registry.bind(bridge, toSession: pane.sessionName)
 
         let peerFD = try await acceptClient(on: serverFD)
         defer { close(peerFD) }
@@ -356,12 +407,12 @@ struct AgentBridgeTests {
 
     @Test
     func bridge_starts_new_conversation_and_handles_rejection_over_socket() async throws {
-        let (_, appState, projectStore) = makeHandler()
+        let (_, registry, appState, projectStore) = makeHandler()
         let pane = try seedPane(appState, projectStore)
         let windowID = UUID()
         let surface = SurfaceRegistry.shared.surface(for: pane, in: .window(windowID))
         defer {
-            pane.disconnectAgent()
+            registry.disconnect(pane: pane)
             SurfaceRegistry.shared.destroySurfaces(of: pane)
         }
 
@@ -374,9 +425,10 @@ struct AgentBridgeTests {
             path: socketPath,
             conversation: "conv-1",
             token: token,
-            windowID: windowID
+            windowID: windowID,
+            registry: registry
         )
-        pane.bindAgent(bridge)
+        registry.bind(bridge, toSession: pane.sessionName)
 
         let peerFD = try await acceptClient(on: serverFD)
         defer { close(peerFD) }
@@ -469,12 +521,12 @@ struct AgentBridgeTests {
 
     @Test
     func submit_moves_message_to_display_rows_immediately_and_deduplicates_or_restores_on_reject() async throws {
-        let (_, appState, projectStore) = makeHandler()
+        let (_, registry, appState, projectStore) = makeHandler()
         let pane = try seedPane(appState, projectStore)
         let windowID = UUID()
         let surface = SurfaceRegistry.shared.surface(for: pane, in: .window(windowID))
         defer {
-            pane.disconnectAgent()
+            registry.disconnect(pane: pane)
             SurfaceRegistry.shared.destroySurfaces(of: pane)
         }
 
@@ -486,9 +538,10 @@ struct AgentBridgeTests {
             path: socketPath,
             conversation: "conv-send",
             token: UUID(),
-            windowID: windowID
+            windowID: windowID,
+            registry: registry
         )
-        pane.bindAgent(bridge)
+        registry.bind(bridge, toSession: pane.sessionName)
 
         let peerFD = try await acceptClient(on: serverFD)
         defer { close(peerFD) }
@@ -634,6 +687,55 @@ struct AgentBridgeTests {
                 offset += written
             }
         }
+    }
+
+    private func sendUnixLine(_ payload: Data, to socketPath: String) async throws -> Data {
+        try await Task.detached {
+            let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+            guard fd >= 0 else { throw POSIXError(.EIO) }
+            defer { close(fd) }
+
+            var addr = sockaddr_un()
+            addr.sun_family = sa_family_t(AF_UNIX)
+            let bytes = Array(socketPath.utf8)
+            withUnsafeMutableBytes(of: &addr.sun_path) { raw in
+                for (index, byte) in bytes.enumerated() {
+                    raw[index] = byte
+                }
+                raw[bytes.count] = 0
+            }
+            let connected = withUnsafePointer(to: &addr) { ptr in
+                ptr.withMemoryRebound(to: sockaddr.self, capacity: 1) { sockPtr in
+                    connect(fd, sockPtr, socklen_t(MemoryLayout<sockaddr_un>.size))
+                }
+            }
+            guard connected == 0 else { throw POSIXError(.ECONNREFUSED) }
+
+            var line = payload
+            line.append(0x0A)
+            try line.withUnsafeBytes { raw in
+                guard let base = raw.baseAddress else { return }
+                var offset = 0
+                while offset < line.count {
+                    let written = write(fd, base.advanced(by: offset), line.count - offset)
+                    guard written > 0 else { throw POSIXError(.EPIPE) }
+                    offset += written
+                }
+            }
+            shutdown(fd, SHUT_WR)
+
+            var response = Data()
+            var buffer = [UInt8](repeating: 0, count: 4096)
+            while true {
+                let n = read(fd, &buffer, buffer.count)
+                if n > 0 {
+                    response.append(contentsOf: buffer[0 ..< n])
+                } else {
+                    break
+                }
+            }
+            return response
+        }.value
     }
 
     private func waitUntil(timeout: Duration = .seconds(3), condition: @MainActor () -> Bool) async throws {

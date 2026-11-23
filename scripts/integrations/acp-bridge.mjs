@@ -264,7 +264,8 @@ export async function runAcpBridge(config, runtime = {}) {
     const requireTTY = runtime.requireTTY ?? true;
     const startupTimeoutMs = runtime.startupTimeoutMs ?? 30000;
     const cwd = runtime.cwd ?? process.cwd();
-    const { MACTERM_SESSION: pane, MACTERM_SOCKET: control } = env;
+    const pane = env.MACTERM_SESSION;
+    const control = env.MACTERM_AGENT_SOCKET || env.MACTERM_SOCKET;
 
     if (!pane || !control || (requireTTY && !inputStream.isTTY)) {
         errorStream.write(`Run this bridge in a local pane in a Macterm main window.\n`);

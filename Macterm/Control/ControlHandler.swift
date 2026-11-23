@@ -79,7 +79,7 @@ final class ControlHandler {
 
     private func dispatch(_ request: ControlRequest, peerPID: pid_t?) async throws -> ControlData {
         let args = request.args ?? ControlArgs()
-        // ControlCommandFreezeTests pins the CLI and private integration commands.
+        // Frozen: `ControlCommandFreezeTests` pins this list (design/011).
         switch request.command {
         case "status": return status()
         case "project.list": return projectList()
@@ -121,9 +121,6 @@ final class ControlHandler {
         case "host.server": return try await hostServer(args)
         #endif
         case "ssh.askpass": return try await sshAskpass(args, peerPID: peerPID)
-        case "pi.register": return try registerAgent(session: args.session, registration: args.piBridge, defaultProvider: .pi)
-        case "agy.register": return try registerAgent(session: args.session, registration: args.agentBridge, defaultProvider: .antigravity)
-        case "agent.register": return try registerAgent(session: args.session, registration: args.agentBridge, defaultProvider: nil)
         case "grid": return try grid(args)
         case "session.list": return try await sessionList()
         case "session.info": return try await sessionInfo(args)
@@ -145,39 +142,6 @@ final class ControlHandler {
                 action: "run `macterm --help` for the supported commands"
             )
         }
-    }
-
-    private func registerAgent(
-        session: String?, registration: ControlAgentRegistration?, defaultProvider: AgentBridge.Provider?
-    ) throws -> ControlData {
-        let resolvedProvider: AgentBridge.Provider? = if let defaultProvider {
-            defaultProvider
-        } else if let raw = registration?.provider {
-            AgentBridge.Provider(identifier: raw)
-        } else {
-            nil
-        }
-        guard let session, !session.isEmpty, let registration, let provider = resolvedProvider,
-              !registration.conversation.isEmpty, registration.conversation.utf8.count <= 256,
-              AgentBridge.acceptsSocket(at: registration.socket, for: provider)
-        else {
-            throw ControlError(code: .badRequest, message: "Supply a session, an agent conversation ID, and an agent bridge socket.")
-        }
-        let panes = appState.workspaces.values
-            .filter { $0.kind != .quick && $0.kind != .widget }
-            .flatMap { $0.tabs.flatMap { $0.splitRoot.allPanes() } }
-            .filter { $0.sessionName == session }
-        guard panes.count == 1, let pane = panes.first, !pane.isRemote else {
-            throw ControlError(code: .notFound, message: "The session must identify one local pane in a main window workspace.")
-        }
-        pane.bindAgent(AgentBridge(
-            provider: provider,
-            path: registration.socket,
-            conversation: registration.conversation,
-            token: registration.token,
-            windowID: appState.keyWindowID ?? appState.windows.first?.id
-        ))
-        return ControlData()
     }
 
     // MARK: - Queries

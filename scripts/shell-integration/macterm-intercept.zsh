@@ -3,8 +3,9 @@
 
 _macterm_sync_intercept() {
     builtin emulate -L zsh -o no_aliases
-    [[ -n "${MACTERM_SOCKET:-}" ]] || builtin return 0
-    builtin local _macterm_file="${MACTERM_SOCKET%/*}/agent-intercept.zsh"
+    builtin local _macterm_sock="${MACTERM_AGENT_SOCKET:-${MACTERM_SOCKET:-}}"
+    [[ -n "$_macterm_sock" ]] || builtin return 0
+    builtin local _macterm_file="${_macterm_sock%/*}/agent-intercept.zsh"
     [[ -r "$_macterm_file" ]] || builtin return 0
     builtin local _macterm_rev=""
     IFS= builtin read -r _macterm_rev < "$_macterm_file" 2>/dev/null || builtin return 0

@@ -28,7 +28,7 @@ For a test without installation, run `pi -e /path/to/macterm-pi-bridge.ts` in th
 - Click **Show Terminal** for approval requests, passwords, slash commands, and other terminal controls.
 - Click **Show Agent GUI** in the pane's top-right corner to show the same conversation again.
 
-Pi stores the conversation. Macterm reads the current branch from Pi and receives updates through a local socket. If the connection closes, the pane shows the terminal. If you quit and open Macterm again, the extension registers again when it finds the app's control socket.
+Pi stores the conversation. Macterm reads the current branch from Pi and receives updates through a local socket. If the connection closes, the pane shows the terminal. If you quit and open Macterm again, the extension registers again when it finds the app's agent registration socket.
 
 ## ACP agents (OpenCode, Antigravity, and others)
 

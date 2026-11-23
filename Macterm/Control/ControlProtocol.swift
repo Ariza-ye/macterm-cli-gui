@@ -40,13 +40,6 @@ enum ControlProtocol {
     static let sessionEnvVar = "MACTERM_SESSION"
 }
 
-struct ControlAgentRegistration: Codable, Equatable {
-    var provider: String?
-    var conversation: String
-    var socket: String
-    var token: UUID
-}
-
 // MARK: - Request
 
 struct ControlRequest: Codable {
@@ -89,8 +82,6 @@ struct ControlArgs: Codable, Equatable {
     /// zmx session name (`macterm-<slug>-<hex12>`) — the restart-stable pane
     /// address.
     var session: String?
-    var piBridge: ControlAgentRegistration?
-    var agentBridge: ControlAgentRegistration?
     /// Filesystem path (`project.create`).
     var path: String?
     /// Display name (`project.create`, `project.rename`).

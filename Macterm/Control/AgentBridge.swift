@@ -189,6 +189,7 @@ final class AgentBridge {
     }
 
     private let initialWindowID: UUID?
+    private let registry: AgentRegistry
     private var windowModes: [UUID: Bool] = [:]
     private let token: UUID
     private let connection: NWConnection
@@ -205,11 +206,19 @@ final class AgentBridge {
     private var onClose: (() -> Void)?
     private static let maxFrameBytes = 1 << 20
 
-    init(provider: Provider, path: String, conversation: String, token: UUID, windowID: UUID?) {
+    init(
+        provider: Provider,
+        path: String,
+        conversation: String,
+        token: UUID,
+        windowID: UUID?,
+        registry: AgentRegistry = .shared
+    ) {
         self.provider = provider
         self.conversation = conversation
         self.token = token
         initialWindowID = windowID
+        self.registry = registry
         connection = NWConnection(to: .unix(path: path), using: .tcp)
     }
 
@@ -342,7 +351,7 @@ final class AgentBridge {
     }
 
     private func canSend(from surface: PaneSurface) -> Bool {
-        guard !surface.isDestroyed, !surface.isReadOnly, surface.pane.agentBridge === self,
+        guard !surface.isDestroyed, !surface.isReadOnly, registry.bridge(for: surface.pane) === self,
               let windowID = surface.windowID
         else { return false }
         return showsGUI(in: windowID)
