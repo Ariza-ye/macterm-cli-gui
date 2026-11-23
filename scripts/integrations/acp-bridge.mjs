@@ -297,6 +297,7 @@ export async function runAcpBridge(config, runtime = {}) {
     let usesLegacyModels = false;
     let booleanConfigIds = new Set();
     let configPending = false;
+    let newConversationPending = false;
 
     const writeOut = text => outputStream.write(text);
     const writeErr = text => errorStream.write(text);
@@ -348,23 +349,10 @@ export async function runAcpBridge(config, runtime = {}) {
         emit({ type: "row", row });
     }
 
-    function confirmPrompt() {
-        if (!turn || turn.accepted) return;
-        turn.accepted = true;
-        upsert({ id: randomUUID(), kind: "user", text: clean(turn.text) });
-        if (turn.owner && turn.owner === peer) emit({ type: "reply", id: turn.id, accepted: true, ...state() });
-    }
-
     function update({ update }) {
         if (!update) return;
         const { sessionUpdate: type, content } = update;
-        if (type === "user_message_chunk" && turn) {
-            confirmPrompt();
-            return;
-        }
-        if (["agent_message_chunk", "agent_thought_chunk", "tool_call", "tool_call_update"].includes(type)) {
-            confirmPrompt();
-        }
+        if (type === "user_message_chunk" && turn) return;
         if (type === "agent_message_chunk" || type === "user_message_chunk") {
             const kind = type === "agent_message_chunk" ? "assistant" : "user";
             if (content?.type !== "text") return;
@@ -427,7 +415,6 @@ export async function runAcpBridge(config, runtime = {}) {
         if (method === "session/update" && (!sessionID || params?.sessionId === sessionID)) {
             update(params);
         } else if (method === "session/request_permission" && params?.sessionId === sessionID) {
-            confirmPrompt();
             permissions.set(id, frame);
             if (permissions.size === 1) showPermission();
             status();
@@ -442,20 +429,21 @@ export async function runAcpBridge(config, runtime = {}) {
     });
 
     async function prompt(text, owner, id) {
-        if (!sessionID || turn || permissions.size || typeof text !== "string" || !text.trim()
+        if (!sessionID || turn || permissions.size || configPending || newConversationPending
+            || typeof text !== "string" || !text.trim()
             || Buffer.byteLength(text) > 128 * 1024) {
             if (owner === peer && owner) emit({ type: "reply", id, accepted: false, ...state() });
             return;
         }
-        turn = { id, owner, text, accepted: false };
+        turn = { id, owner, text };
         message = undefined;
-        status();
+        upsert({ id: randomUUID(), kind: "user", text: clean(text) });
+        if (owner && owner === peer) emit({ type: "reply", id, accepted: true, ...state() });
+        else status();
         try {
             await request("session/prompt", { sessionId: sessionID, prompt: [{ type: "text", text }] });
-            confirmPrompt();
         } catch (error) {
             upsert({ id: randomUUID(), kind: "assistant", text: clean(error.message) });
-            if (!turn.accepted && owner && peer === owner) emit({ type: "reply", id, accepted: false, ...state() });
             writeErr(`\n${clean(error.message)}\n`);
         } finally {
             turn = undefined;
@@ -478,7 +466,8 @@ export async function runAcpBridge(config, runtime = {}) {
             if (owner && owner === peer) emit({ type: "configReply", id, accepted, configOptions, ...state() });
         };
         const option = configOptions.find(item => item.id === configId);
-        if (!sessionID || turn || permissions.size || configPending || typeof configId !== "string"
+        if (!sessionID || turn || permissions.size || configPending || newConversationPending
+            || typeof configId !== "string"
             || typeof value !== "string" || !option || !option.options.some(choice => choice.value === value)) {
             reply(false);
             return;
@@ -516,6 +505,51 @@ export async function runAcpBridge(config, runtime = {}) {
         }
     }
 
+    async function newConversation(owner, id) {
+        const reply = accepted => {
+            if (owner && owner === peer) {
+                emit({
+                    type: "newConversationReply",
+                    id,
+                    accepted,
+                    ...(accepted ? { conversation: sessionID, configOptions } : {}),
+                    ...state(),
+                });
+            }
+        };
+        if (!sessionID || turn || permissions.size || configPending || newConversationPending) {
+            reply(false);
+            return;
+        }
+        newConversationPending = true;
+        try {
+            const sessionResult = await request("session/new", { cwd, mcpServers: [] });
+            const nextSessionID = sessionResult?.sessionId;
+            if (typeof nextSessionID !== "string" || !nextSessionID) {
+                throw new Error(`${config.name} did not provide a conversation ID.`);
+            }
+            sessionID = nextSessionID;
+            rows.clear();
+            message = undefined;
+            applySessionConfig(sessionResult?.configOptions, sessionResult?.models);
+            if (!closed) {
+                writeOut(`\n${config.name} conversation: ${clean(sessionID)}\n`);
+                if (!permissions.size) terminal.prompt();
+            }
+            if (owner) {
+                reply(true);
+            } else {
+                emit({ type: "snapshot", conversation: sessionID });
+                emit({ type: "snapshotEnd", ...state(), configOptions });
+            }
+        } catch (error) {
+            writeErr(`\n${clean(error.message)}\n`);
+            reply(false);
+        } finally {
+            newConversationPending = false;
+        }
+    }
+
     terminal.on("line", line => {
         if (permissions.size) {
             const req = permissions.values().next().value;
@@ -530,8 +564,11 @@ export async function runAcpBridge(config, runtime = {}) {
             showPermission();
         } else if (line === "/exit") {
             close();
+        } else if (line === "/new") {
+            if (turn || configPending || newConversationPending) writeOut("Wait for the current turn to end.\n");
+            else void newConversation();
         } else if (line.trim()) {
-            if (turn) writeOut("Wait for the current turn to end.\n");
+            if (turn || configPending || newConversationPending) writeOut("Wait for the current turn to end.\n");
             else void prompt(line);
         } else if (!turn) {
             terminal.prompt();
@@ -570,6 +607,8 @@ export async function runAcpBridge(config, runtime = {}) {
                 void prompt(command.text, socket, command.id);
             } else if (command?.type === "setConfig" && typeof command.id === "string") {
                 void setConfig(command.configId, command.value, socket, command.id);
+            } else if (command?.type === "newConversation" && typeof command.id === "string") {
+                void newConversation(socket, command.id);
             } else if (command?.type === "stop") {
                 stop();
             }

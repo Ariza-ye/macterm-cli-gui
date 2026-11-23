@@ -80,6 +80,15 @@ function messageRow(id: string, message: Message): Row | undefined {
 
 export default function (pi: ExtensionAPI) {
     let runtime: ReturnType<typeof startBridge>;
+    pi.registerCommand("macterm-new", {
+        description: "Start a new conversation from Macterm",
+        handler: async (_args, cmdCtx) => {
+            const result = await cmdCtx.newSession();
+            if (result.cancelled) {
+                runtime?.rejectNewConversation();
+            }
+        },
+    });
     pi.on("session_start", (_event, ctx) => {
         runtime?.close();
         const session = process.env.MACTERM_SESSION;
@@ -121,6 +130,7 @@ function startBridge(pi: ExtensionAPI, ctx: ExtensionContext, session: string, c
     let registeredSocket: string | undefined;
     let registeringSocket: string | undefined;
     let pending: { id: string; timer: NodeJS.Timeout; owner: Socket } | undefined;
+    let pendingNewConversation: { id: string; timer: NodeJS.Timeout; owner: Socket } | undefined;
     let configPending = false;
     let waiting = false;
     let closed = false;
@@ -199,6 +209,13 @@ function startBridge(pi: ExtensionAPI, ctx: ExtensionContext, session: string, c
         pending = undefined;
         if (owner === peer) emit({ type: "reply", id, accepted, ...state() });
     }
+    function sendNewConversationReply(accepted: boolean) {
+        if (!pendingNewConversation) return;
+        const { id, timer, owner } = pendingNewConversation;
+        clearTimeout(timer);
+        pendingNewConversation = undefined;
+        if (owner === peer) emit({ type: "newConversationReply", id, accepted, ...state() });
+    }
     function snapshot() {
         if (!peer) return;
         emit({ type: "snapshot", conversation });
@@ -220,6 +237,7 @@ function startBridge(pi: ExtensionAPI, ctx: ExtensionContext, session: string, c
             connected.delete(socket);
             if (peer === socket) peer = undefined;
             if (pending?.owner === socket) sendReply(false);
+            if (pendingNewConversation?.owner === socket) sendNewConversationReply(false);
         });
         let buffer = "";
         socket.on("data", (chunk: string) => {
@@ -264,7 +282,7 @@ function startBridge(pi: ExtensionAPI, ctx: ExtensionContext, session: string, c
                             });
                         }
                     };
-                    if (pending || configPending || waiting || !ctx.isIdle()
+                    if (pending || configPending || pendingNewConversation || waiting || !ctx.isIdle()
                         || typeof command.configId !== "string" || typeof command.value !== "string") {
                         replyConfig(false);
                         continue;
@@ -298,8 +316,26 @@ function startBridge(pi: ExtensionAPI, ctx: ExtensionContext, session: string, c
                     } else {
                         replyConfig(false);
                     }
+                } else if (command.type === "newConversation" && typeof command.id === "string") {
+                    if (pending || configPending || pendingNewConversation || waiting || !ctx.isIdle()) {
+                        emit({ type: "newConversationReply", id: command.id, accepted: false, ...state() });
+                        continue;
+                    }
+                    pendingNewConversation = {
+                        id: command.id,
+                        owner: socket,
+                        timer: setTimeout(() => sendNewConversationReply(false), 15000).unref(),
+                    };
+                    try {
+                        void Promise.resolve(
+                            pi.sendUserMessage("/macterm-new", { expandPromptTemplates: true }),
+                        ).catch(() => sendNewConversationReply(false));
+                    } catch {
+                        sendNewConversationReply(false);
+                    }
                 } else if (command.type === "send" && typeof command.id === "string") {
-                    if (pending || configPending || waiting || !ctx.isIdle() || typeof command.text !== "string"
+                    if (pending || configPending || pendingNewConversation || waiting || !ctx.isIdle()
+                        || typeof command.text !== "string"
                         || !command.text.trim() || Buffer.byteLength(command.text) > 128 * 1024) {
                         emit({ type: "reply", id: command.id, accepted: false, ...state() });
                         continue;
@@ -340,6 +376,14 @@ function startBridge(pi: ExtensionAPI, ctx: ExtensionContext, session: string, c
         if (closed) return;
         closed = true;
         clearInterval(timer);
+        if (pending) {
+            clearTimeout(pending.timer);
+            pending = undefined;
+        }
+        if (pendingNewConversation) {
+            clearTimeout(pendingNewConversation.timer);
+            pendingNewConversation = undefined;
+        }
         registration?.destroy();
         for (const socket of connected) socket.destroy();
         server.close();
@@ -352,6 +396,7 @@ function startBridge(pi: ExtensionAPI, ctx: ExtensionContext, session: string, c
     return {
         close, snapshot, status, config,
         acceptSend: () => sendReply(true),
+        rejectNewConversation: () => sendNewConversationReply(false),
         setWaiting(value: boolean) { waiting = value; status(); },
         message(message: Message, phase: "start" | "update" | "end") {
             if (message.role !== "user" && message.role !== "assistant") return;

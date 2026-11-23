@@ -352,6 +352,213 @@ struct AgentBridgeTests {
         }
     }
 
+    // MARK: - New conversation
+
+    @Test
+    func bridge_starts_new_conversation_and_handles_rejection_over_socket() async throws {
+        let (_, appState, projectStore) = makeHandler()
+        let pane = try seedPane(appState, projectStore)
+        let windowID = UUID()
+        let surface = SurfaceRegistry.shared.surface(for: pane, in: .window(windowID))
+        defer {
+            pane.disconnectAgent()
+            SurfaceRegistry.shared.destroySurfaces(of: pane)
+        }
+
+        let (socketPath, serverFD, cleanup) = try makeListeningBridgeSocket(prefix: "agent")
+        defer { cleanup() }
+
+        let token = UUID()
+        let bridge = AgentBridge(
+            provider: .antigravity,
+            path: socketPath,
+            conversation: "conv-1",
+            token: token,
+            windowID: windowID
+        )
+        pane.bindAgent(bridge)
+
+        let peerFD = try await acceptClient(on: serverFD)
+        defer { close(peerFD) }
+        _ = try await readLine(from: peerFD) // hello
+
+        let initialConfig: [[String: Any]] = [
+            [
+                "id": "model",
+                "name": "Model",
+                "category": "model",
+                "currentValue": "gemini-4-neon",
+                "options": [
+                    ["value": "gemini-4-neon", "name": "Gemini 4 Neon"],
+                    ["value": "gemini-3.8-flash", "name": "Gemini 3.8 Flash"],
+                ],
+            ],
+        ]
+        try writeFrame(["type": "snapshot", "conversation": "conv-1"], to: peerFD)
+        try writeFrame([
+            "type": "row",
+            "row": ["id": "u1", "kind": "user", "text": "Hello"],
+        ], to: peerFD)
+        try writeFrame([
+            "type": "row",
+            "row": ["id": "a1", "kind": "assistant", "text": "Hi there"],
+        ], to: peerFD)
+        try writeFrame(["type": "snapshotEnd", "busy": false, "waiting": false, "configOptions": initialConfig], to: peerFD)
+
+        try await waitUntil { bridge.isReady && bridge.rows.count == 2 }
+        bridge.draft = "Unsent prompt"
+
+        // Accepted new conversation clears rows, updates conversation ID and config, and keeps unsent draft.
+        bridge.newConversation(from: surface)
+        #expect(bridge.pendingNewConversation != nil)
+
+        let requestLine = try await readLine(from: peerFD)
+        let request = try #require(JSONSerialization.jsonObject(with: Data(requestLine.utf8)) as? [String: Any])
+        #expect(request["type"] as? String == "newConversation")
+        let requestID = try #require(request["id"] as? String)
+
+        var nextConfig = initialConfig
+        nextConfig[0]["currentValue"] = "gemini-3.8-flash"
+        try writeFrame([
+            "type": "newConversationReply",
+            "id": requestID,
+            "accepted": true,
+            "conversation": "conv-2",
+            "configOptions": nextConfig,
+            "busy": false,
+            "waiting": false,
+        ], to: peerFD)
+
+        try await waitUntil { bridge.pendingNewConversation == nil && bridge.conversation == "conv-2" }
+        #expect(!bridge.newConversationRejected)
+        #expect(bridge.rows.isEmpty)
+        #expect(bridge.draft == "Unsent prompt")
+        #expect(bridge.modelOption?.currentValue == "gemini-3.8-flash")
+
+        // New message arrives in conv-2, then a rejected newConversation preserves it.
+        try writeFrame([
+            "type": "row",
+            "row": ["id": "u2", "kind": "user", "text": "Second chat"],
+        ], to: peerFD)
+        try await waitUntil { bridge.rows.count == 1 }
+
+        bridge.newConversation(from: surface)
+        let rejectLine = try await readLine(from: peerFD)
+        let rejectReq = try #require(JSONSerialization.jsonObject(with: Data(rejectLine.utf8)) as? [String: Any])
+        let rejectID = try #require(rejectReq["id"] as? String)
+        try writeFrame([
+            "type": "newConversationReply",
+            "id": rejectID,
+            "accepted": false,
+            "busy": false,
+            "waiting": false,
+        ], to: peerFD)
+
+        try await waitUntil { bridge.pendingNewConversation == nil && bridge.newConversationRejected }
+        #expect(bridge.conversation == "conv-2")
+        #expect(bridge.rows.count == 1)
+
+        // Terminal-initiated /new pushes a snapshot with a new conversation ID after ready.
+        try writeFrame(["type": "snapshot", "conversation": "conv-3"], to: peerFD)
+        try writeFrame(["type": "snapshotEnd", "busy": false, "waiting": false, "configOptions": initialConfig], to: peerFD)
+        try await waitUntil { bridge.conversation == "conv-3" && bridge.rows.isEmpty }
+        #expect(bridge.modelOption?.currentValue == "gemini-4-neon")
+    }
+
+    // MARK: - Optimistic send
+
+    @Test
+    func submit_moves_message_to_display_rows_immediately_and_deduplicates_or_restores_on_reject() async throws {
+        let (_, appState, projectStore) = makeHandler()
+        let pane = try seedPane(appState, projectStore)
+        let windowID = UUID()
+        let surface = SurfaceRegistry.shared.surface(for: pane, in: .window(windowID))
+        defer {
+            pane.disconnectAgent()
+            SurfaceRegistry.shared.destroySurfaces(of: pane)
+        }
+
+        let (socketPath, serverFD, cleanup) = try makeListeningBridgeSocket(prefix: "agent")
+        defer { cleanup() }
+
+        let bridge = AgentBridge(
+            provider: .antigravity,
+            path: socketPath,
+            conversation: "conv-send",
+            token: UUID(),
+            windowID: windowID
+        )
+        pane.bindAgent(bridge)
+
+        let peerFD = try await acceptClient(on: serverFD)
+        defer { close(peerFD) }
+        _ = try await readLine(from: peerFD) // hello
+
+        try writeFrame(["type": "snapshot", "conversation": "conv-send"], to: peerFD)
+        try writeFrame(["type": "snapshotEnd", "busy": false, "waiting": false], to: peerFD)
+        try await waitUntil { bridge.isReady }
+
+        // 1. ACP order: optimistic bubble appears immediately, server sends user row then reply.
+        bridge.draft = "Hello agent"
+        bridge.submit(from: surface)
+        #expect(bridge.draft.isEmpty)
+        #expect(bridge.pendingSend != nil)
+        #expect(bridge.displayRows.count == 1)
+        #expect(bridge.displayRows[0].kind == .user)
+        #expect(bridge.displayRows[0].text == "Hello agent")
+
+        let sendLine1 = try await readLine(from: peerFD)
+        let sendReq1 = try #require(JSONSerialization.jsonObject(with: Data(sendLine1.utf8)) as? [String: Any])
+        let sendID1 = try #require(sendReq1["id"] as? String)
+
+        try writeFrame(["type": "row", "row": ["id": "u1", "kind": "user", "text": "Hello agent"]], to: peerFD)
+        try writeFrame(["type": "reply", "id": sendID1, "accepted": true, "busy": true, "waiting": false], to: peerFD)
+        try await waitUntil { bridge.pendingSend == nil && bridge.isBusy && bridge.rows.count == 1 }
+        #expect(bridge.displayRows.count == 1)
+        #expect(bridge.displayRows[0].id == "u1")
+
+        try writeFrame(["type": "status", "busy": false, "waiting": false], to: peerFD)
+        try await waitUntil { !bridge.isBusy }
+
+        // 2. Pi order: reply(accepted: true, busy: true) arrives before echoed user row — no flicker.
+        bridge.draft = "Second message"
+        bridge.submit(from: surface)
+        #expect(bridge.draft.isEmpty)
+        #expect(bridge.displayRows.count == 2)
+
+        let sendLine2 = try await readLine(from: peerFD)
+        let sendReq2 = try #require(JSONSerialization.jsonObject(with: Data(sendLine2.utf8)) as? [String: Any])
+        let sendID2 = try #require(sendReq2["id"] as? String)
+
+        try writeFrame(["type": "reply", "id": sendID2, "accepted": true, "busy": true, "waiting": false], to: peerFD)
+        try await waitUntil { bridge.pendingSend == nil && bridge.isBusy }
+        #expect(bridge.displayRows.count == 2)
+        #expect(bridge.displayRows[1].text == "Second message")
+
+        try writeFrame(["type": "row", "row": ["id": "u2", "kind": "user", "text": "Second message"]], to: peerFD)
+        try await waitUntil { bridge.rows.count == 2 }
+        #expect(bridge.displayRows.count == 2)
+        #expect(bridge.displayRows[1].id == "u2")
+
+        try writeFrame(["type": "status", "busy": false, "waiting": false], to: peerFD)
+        try await waitUntil { !bridge.isBusy }
+
+        // 3. Rejected send removes optimistic bubble and restores draft.
+        bridge.draft = "Will be rejected"
+        bridge.submit(from: surface)
+        #expect(bridge.draft.isEmpty)
+        #expect(bridge.displayRows.count == 3)
+
+        let sendLine3 = try await readLine(from: peerFD)
+        let sendReq3 = try #require(JSONSerialization.jsonObject(with: Data(sendLine3.utf8)) as? [String: Any])
+        let sendID3 = try #require(sendReq3["id"] as? String)
+
+        try writeFrame(["type": "reply", "id": sendID3, "accepted": false, "busy": false, "waiting": false], to: peerFD)
+        try await waitUntil { bridge.pendingSend == nil && bridge.sendRejected }
+        #expect(bridge.displayRows.count == 2)
+        #expect(bridge.draft == "Will be rejected")
+    }
+
     private func makeListeningBridgeSocket(prefix: String) throws -> (String, Int32, () -> Void) {
         let token = String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(6))
         let directory = "/tmp/macterm-\(prefix)-\(token)"

@@ -329,7 +329,9 @@ private struct TerminalSurface: NSViewRepresentable {
 
         func syncAgentFocus() {
             guard let scroll, scroll.superview === self else { return }
-            (scroll.surfaceView as? GhosttyTerminalNSView)?.agentPaneFocus = agentOverlay == nil ? nil : agentFocus
+            let showsAgent = agentOverlay != nil
+            scroll.suppressesDocumentCursor = showsAgent
+            (scroll.surfaceView as? GhosttyTerminalNSView)?.agentPaneFocus = showsAgent ? agentFocus : nil
         }
     }
 

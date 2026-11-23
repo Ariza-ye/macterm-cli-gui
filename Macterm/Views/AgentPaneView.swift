@@ -15,7 +15,13 @@ struct AgentPaneView: View {
             VStack(spacing: 0) {
                 header
                 Rectangle().fill(MactermTheme.border).frame(height: 1).accessibilityHidden(true)
-                AgentTranscript(rows: bridge.rows, agentName: bridge.provider.displayName)
+                AgentTranscript(
+                    rows: bridge.displayRows,
+                    agentName: bridge.provider.displayName,
+                    isPendingSend: bridge.pendingSend != nil,
+                    isBusy: bridge.isBusy,
+                    isWaiting: bridge.isWaiting
+                )
                 composer(maxEditorHeight: min(240, max(36, pane.size.height * 0.4)))
             }
         }
@@ -51,12 +57,33 @@ struct AgentPaneView: View {
             } else if bridge.isBusy {
                 ProgressView().controlSize(.mini).accessibilityLabel(Text("Agent is working"))
             }
+            Button {
+                bridge.newConversation(from: surface)
+                if let input = focus.input {
+                    input.window?.makeFirstResponder(input)
+                }
+            } label: {
+                if bridge.pendingNewConversation != nil {
+                    HStack(spacing: 5) {
+                        ProgressView().controlSize(.mini)
+                        Text("New Conversation")
+                    }
+                } else {
+                    Label("New Conversation", systemImage: "square.and.pencil")
+                }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .disabled(!canStartAction)
+            .fixedSize()
+            .pointingHandCursor(canStartAction)
             Button(action: showTerminal) {
                 Label("Show Terminal", systemImage: "terminal")
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
             .fixedSize()
+            .pointingHandCursor()
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
@@ -76,7 +103,7 @@ struct AgentPaneView: View {
                 AgentComposer(
                     text: $bridge.draft,
                     focus: focus,
-                    isEditable: !surface.isReadOnly && bridge.pendingSend == nil,
+                    isEditable: !surface.isReadOnly,
                     maxHeight: maxEditorHeight,
                     submit: { bridge.submit(from: surface) }
                 )
@@ -98,14 +125,16 @@ struct AgentPaneView: View {
                 }
                 Spacer(minLength: 4)
                 if bridge.isBusy {
+                    let canStop = !surface.isReadOnly && bridge.isReady
                     Button {
                         bridge.stop(from: surface)
                     } label: {
                         Label("Stop", systemImage: "stop.fill")
                     }
                     .buttonStyle(.bordered)
-                    .disabled(surface.isReadOnly || !bridge.isReady)
+                    .disabled(!canStop)
                     .fixedSize()
+                    .pointingHandCursor(canStop)
                 } else {
                     Button {
                         bridge.submit(from: surface)
@@ -115,6 +144,7 @@ struct AgentPaneView: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(!canSubmit)
                     .fixedSize()
+                    .pointingHandCursor(canSubmit)
                 }
             }
             .padding(.horizontal, 8)
@@ -135,13 +165,13 @@ struct AgentPaneView: View {
     }
 
     private var hasComposerStatus: Bool {
-        surface.isReadOnly || bridge.pendingSend != nil || bridge.sendRejected || bridge.configRejected
-            || bridge.draft.utf8.count > 128 * 1024 || bridge.isBusy
+        surface.isReadOnly || bridge.sendRejected || bridge.configRejected
+            || bridge.newConversationRejected || bridge.draft.utf8.count > 128 * 1024
     }
 
-    private var canChangeConfig: Bool {
+    private var canStartAction: Bool {
         !surface.isReadOnly && bridge.isReady && !bridge.isBusy && !bridge.isWaiting
-            && bridge.pendingSend == nil && bridge.pendingConfigID == nil
+            && bridge.pendingSend == nil && bridge.pendingConfigID == nil && bridge.pendingNewConversation == nil
     }
 
     @ViewBuilder
@@ -150,7 +180,7 @@ struct AgentPaneView: View {
             AgentConfigControl(
                 option: model,
                 isPending: bridge.pendingConfigID == model.id,
-                isDisabled: !canChangeConfig || model.options.count <= 1,
+                isDisabled: !canStartAction || model.options.count <= 1,
                 allowsTruncation: true,
                 onSelect: { bridge.setConfig(model.id, value: $0, from: surface) }
             )
@@ -160,7 +190,7 @@ struct AgentPaneView: View {
             AgentConfigControl(
                 option: speed,
                 isPending: bridge.pendingConfigID == speed.id,
-                isDisabled: !canChangeConfig || speed.options.count <= 1,
+                isDisabled: !canStartAction || speed.options.count <= 1,
                 allowsTruncation: false,
                 onSelect: { bridge.setConfig(speed.id, value: $0, from: surface) }
             )
@@ -171,26 +201,19 @@ struct AgentPaneView: View {
     private var composerStatus: some View {
         if surface.isReadOnly {
             Label("Read-Only", systemImage: "lock").foregroundStyle(MactermTheme.fgMuted)
-        } else if bridge.pendingSend != nil {
-            HStack(spacing: 6) {
-                ProgressView().controlSize(.mini)
-                Text("Sending…")
-            }
-            .foregroundStyle(MactermTheme.fgMuted)
         } else if bridge.sendRejected {
             Text("The agent did not confirm the message.").foregroundStyle(MactermTheme.failure)
         } else if bridge.configRejected {
             Text("The agent did not apply the setting.").foregroundStyle(MactermTheme.failure)
+        } else if bridge.newConversationRejected {
+            Text("The agent did not start a new conversation.").foregroundStyle(MactermTheme.failure)
         } else if bridge.draft.utf8.count > 128 * 1024 {
             Text("The message is too long.").foregroundStyle(MactermTheme.failure)
-        } else if bridge.isBusy {
-            Text("Agent is working").foregroundStyle(MactermTheme.fgMuted)
         }
     }
 
     private var canSubmit: Bool {
-        !surface.isReadOnly && bridge.isReady && !bridge.isBusy && !bridge.isWaiting
-            && bridge.pendingSend == nil && bridge.pendingConfigID == nil
+        canStartAction
             && !bridge.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && bridge.draft.utf8.count <= 128 * 1024
     }
 }
@@ -235,6 +258,7 @@ private struct AgentConfigControl: View {
         .fixedSize(horizontal: !allowsTruncation, vertical: true)
         .disabled(isDisabled)
         .opacity(isDisabled && !isPending ? 0.6 : 1)
+        .pointingHandCursor(!isDisabled)
         .help(Text(verbatim: option.name))
         .accessibilityLabel(Text(verbatim: option.name))
         .accessibilityValue(Text(verbatim: option.currentDisplayName))
@@ -360,6 +384,7 @@ private struct AgentSearchableOptionPopover: View {
                             .foregroundStyle(MactermTheme.fgMuted)
                     }
                     .buttonStyle(.plain)
+                    .pointingHandCursor()
                     .accessibilityLabel(Text("Clear"))
                 }
             }
@@ -435,6 +460,7 @@ private struct AgentSearchableOptionPopover: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .pointingHandCursor()
         .onHover { hovering in
             if hovering {
                 hoveredValue = choice.value
@@ -473,10 +499,18 @@ private func groupedAgentChoices(
 private struct AgentTranscript: View {
     let rows: [AgentBridge.Row]
     let agentName: String
+    let isPendingSend: Bool
+    let isBusy: Bool
+    let isWaiting: Bool
+
+    private var isWorking: Bool {
+        isPendingSend || isBusy || isWaiting
+    }
+
     var body: some View {
         GeometryReader { viewport in
             let columnWidth = max(0, min(agentColumnWidth, viewport.size.width - 32))
-            if rows.isEmpty {
+            if rows.isEmpty, !isWorking {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Start a conversation").font(.title2.weight(.semibold))
                     Text("Ask a question or describe a task.").foregroundStyle(MactermTheme.fgMuted)
@@ -484,15 +518,24 @@ private struct AgentTranscript: View {
                 .frame(maxWidth: columnWidth, alignment: .leading)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
+                let currentEntries = entries
+                let lastEntry = currentEntries.last
                 AgentTranscriptScroll(viewportHeight: viewport.size.height) {
                     LazyVStack(alignment: .leading, spacing: 16) {
-                        ForEach(entries) { entry in
+                        ForEach(currentEntries) { entry in
                             switch entry {
                             case let .message(row):
-                                message(row, width: columnWidth)
+                                message(
+                                    row,
+                                    width: columnWidth,
+                                    isStreaming: isWorking && !isWaiting && entry.id == lastEntry?.id
+                                )
                             case let .tools(rows):
                                 AgentToolGroup(rows: rows)
                             }
+                        }
+                        if showsStandaloneProgress(after: lastEntry) {
+                            assistantProgress(showHeader: !isAssistantEntry(lastEntry))
                         }
                     }
                     .padding(.vertical, 16)
@@ -501,6 +544,51 @@ private struct AgentTranscript: View {
                 }
             }
         }
+    }
+
+    private func isAssistantEntry(_ entry: Entry?) -> Bool {
+        guard case let .message(row) = entry else { return false }
+        return row.kind == .assistant
+    }
+
+    private func showsStandaloneProgress(after lastEntry: Entry?) -> Bool {
+        guard isWorking else { return false }
+        if isWaiting { return true }
+        if isAssistantEntry(lastEntry) { return false }
+        if case let .tools(toolRows) = lastEntry, toolRows.contains(where: { $0.status == .running }) {
+            return false
+        }
+        return true
+    }
+
+    private func assistantProgress(showHeader: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if showHeader {
+                HStack(spacing: 6) {
+                    Image(systemName: "sparkle").foregroundStyle(MactermTheme.accent).accessibilityHidden(true)
+                    Text(verbatim: agentName).foregroundStyle(MactermTheme.fgMuted)
+                }
+                .font(.caption.weight(.semibold))
+            }
+            HStack(spacing: 8) {
+                if isWaiting {
+                    Image(systemName: "terminal")
+                        .foregroundStyle(MactermTheme.warning)
+                        .accessibilityHidden(true)
+                    Text("Continue in Terminal")
+                        .foregroundStyle(MactermTheme.warning)
+                } else {
+                    ProgressView().controlSize(.mini)
+                    if isPendingSend {
+                        Text("Sending…").foregroundStyle(MactermTheme.fgMuted)
+                    } else {
+                        Text("Agent is working").foregroundStyle(MactermTheme.fgMuted)
+                    }
+                }
+            }
+            .font(.callout)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private enum Entry: Identifiable {
@@ -534,7 +622,7 @@ private struct AgentTranscript: View {
     }
 
     @ViewBuilder
-    private func message(_ row: AgentBridge.Row, width: CGFloat) -> some View {
+    private func message(_ row: AgentBridge.Row, width: CGFloat, isStreaming: Bool) -> some View {
         if row.kind == .user {
             VStack(alignment: .trailing, spacing: 4) {
                 Text("You").font(.caption.weight(.medium)).foregroundStyle(MactermTheme.fgMuted)
@@ -556,6 +644,9 @@ private struct AgentTranscript: View {
                 HStack(spacing: 6) {
                     Image(systemName: "sparkle").foregroundStyle(MactermTheme.accent).accessibilityHidden(true)
                     Text(verbatim: agentName).foregroundStyle(MactermTheme.fgMuted)
+                    if isStreaming {
+                        ProgressView().controlSize(.mini).accessibilityLabel(Text("Agent is working"))
+                    }
                 }
                 .font(.caption.weight(.semibold))
                 AgentMarkdownView(source: row.text)
@@ -601,6 +692,7 @@ private struct AgentTranscriptScroll<Content: View>: View {
                     .buttonStyle(.bordered)
                     .controlSize(.small)
                     .background(Color(nsColor: MactermTheme.nsConfiguredBg), in: RoundedRectangle(cornerRadius: 6))
+                    .pointingHandCursor()
                     .padding(.bottom, 8)
                 }
             }
@@ -772,5 +864,44 @@ private struct AgentComposer: NSViewRepresentable {
 
         let height = max(layout.usedRect(for: container).maxY, layout.extraLineFragmentRect.maxY)
         return CGSize(width: width, height: min(maxHeight, max(36, ceil(height + Self.inset.height * 2))))
+    }
+}
+
+private extension View {
+    func pointingHandCursor(_ enabled: Bool = true) -> some View {
+        overlay {
+            AgentPointerCursor(enabled: enabled)
+                .allowsHitTesting(false)
+        }
+    }
+}
+
+/// Applies the pointing hand cursor over clickable controls via AppKit cursor rects.
+private struct AgentPointerCursor: NSViewRepresentable {
+    let enabled: Bool
+
+    final class CursorView: NSView {
+        var isCursorEnabled = true
+
+        override func hitTest(_: NSPoint) -> NSView? {
+            nil
+        }
+
+        override func resetCursorRects() {
+            guard isCursorEnabled else { return }
+            addCursorRect(bounds, cursor: .pointingHand)
+        }
+    }
+
+    func makeNSView(context _: Context) -> CursorView {
+        let view = CursorView()
+        view.isCursorEnabled = enabled
+        return view
+    }
+
+    func updateNSView(_ view: CursorView, context _: Context) {
+        guard view.isCursorEnabled != enabled else { return }
+        view.isCursorEnabled = enabled
+        view.window?.invalidateCursorRects(for: view)
     }
 }

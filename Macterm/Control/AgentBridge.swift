@@ -134,6 +134,7 @@ final class AgentBridge {
             case reply
             case config
             case configReply
+            case newConversationReply
         }
 
         let type: Kind
@@ -157,6 +158,7 @@ final class AgentBridge {
 
     private(set) var rows: [Row] = []
     private(set) var configOptions: [ConfigOption] = []
+    private(set) var conversation: String
     private(set) var isReady = false
     private(set) var isBusy = false
     private(set) var isWaiting = false
@@ -164,7 +166,15 @@ final class AgentBridge {
     private(set) var sendRejected = false
     private(set) var pendingConfigID: String?
     private(set) var configRejected = false
+    private(set) var pendingNewConversation: UUID?
+    private(set) var newConversationRejected = false
     var draft = ""
+
+    /// Transcript rows including an optimistic user bubble while waiting for the bridge to echo it.
+    var displayRows: [Row] {
+        guard let optimisticUserRow else { return rows }
+        return rows + [optimisticUserRow]
+    }
 
     var modelOption: ConfigOption? {
         configOptions.first { $0.effectiveCategory == .model && !$0.options.isEmpty }
@@ -180,16 +190,18 @@ final class AgentBridge {
 
     private let initialWindowID: UUID?
     private var windowModes: [UUID: Bool] = [:]
-    private let conversation: String
     private let token: UUID
     private let connection: NWConnection
     private var received = Data()
     private var rowIndices: [String: Int] = [:]
     private var snapshot: [Row]?
     private var isClosed = false
+    private var pendingSendText: String?
+    private var optimisticUserRow: Row?
     private var requestTimeout: Task<Void, Never>?
     private var pendingConfigRequest: (id: UUID, configID: String)?
     private var configTimeout: Task<Void, Never>?
+    private var newConversationTimeout: Task<Void, Never>?
     private var onClose: (() -> Void)?
     private static let maxFrameBytes = 1 << 20
 
@@ -245,42 +257,53 @@ final class AgentBridge {
         isClosed = true
         isReady = false
         pendingSend = nil
+        pendingSendText = nil
+        optimisticUserRow = nil
         pendingConfigRequest = nil
         pendingConfigID = nil
+        pendingNewConversation = nil
         requestTimeout?.cancel()
         configTimeout?.cancel()
+        newConversationTimeout?.cancel()
         connection.cancel()
         onClose?()
         onClose = nil
     }
 
     func submit(from surface: PaneSurface) {
-        guard canSend(from: surface), !isBusy, !isWaiting, pendingSend == nil, pendingConfigRequest == nil,
+        guard canSend(from: surface), !isBusy, !isWaiting,
+              pendingSend == nil, pendingConfigRequest == nil, pendingNewConversation == nil,
               !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               draft.utf8.count <= 128 * 1024
         else { return }
         let id = UUID()
         let submitted = draft
+        draft = ""
         sendRejected = false
         configRejected = false
+        newConversationRejected = false
         pendingSend = id
+        pendingSendText = submitted
+        optimisticUserRow = Row(id: "pending:\(id.uuidString)", kind: .user, text: submitted)
         send(Command(type: "send", id: id, text: submitted))
+        requestTimeout?.cancel()
         requestTimeout = Task { [weak self] in
             try? await Task.sleep(for: .seconds(30))
             guard !Task.isCancelled, let self, pendingSend == id else { return }
-            pendingSend = nil
-            sendRejected = true
+            failPendingSend()
         }
     }
 
     func setConfig(_ configID: String, value: String, from surface: PaneSurface) {
-        guard canSend(from: surface), !isBusy, !isWaiting, pendingSend == nil, pendingConfigRequest == nil,
+        guard canSend(from: surface), !isBusy, !isWaiting,
+              pendingSend == nil, pendingConfigRequest == nil, pendingNewConversation == nil,
               let option = configOptions.first(where: { $0.id == configID }),
               option.currentValue != value,
               option.options.contains(where: { $0.value == value })
         else { return }
         let id = UUID()
         configRejected = false
+        newConversationRejected = false
         pendingConfigRequest = (id, configID)
         pendingConfigID = configID
         send(Command(type: "setConfig", id: id, configId: configID, value: value))
@@ -291,6 +314,25 @@ final class AgentBridge {
             pendingConfigRequest = nil
             pendingConfigID = nil
             configRejected = true
+        }
+    }
+
+    func newConversation(from surface: PaneSurface) {
+        guard canSend(from: surface), !isBusy, !isWaiting,
+              pendingSend == nil, pendingConfigRequest == nil, pendingNewConversation == nil
+        else { return }
+        let id = UUID()
+        sendRejected = false
+        configRejected = false
+        newConversationRejected = false
+        pendingNewConversation = id
+        send(Command(type: "newConversation", id: id))
+        newConversationTimeout?.cancel()
+        newConversationTimeout = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(15))
+            guard !Task.isCancelled, let self, pendingNewConversation == id else { return }
+            pendingNewConversation = nil
+            newConversationRejected = true
         }
     }
 
@@ -358,7 +400,15 @@ final class AgentBridge {
     private func apply(_ event: Event) {
         switch event.type {
         case .snapshot:
-            guard event.conversation == conversation else { close()
+            if !isReady {
+                guard event.conversation == conversation else {
+                    close()
+                    return
+                }
+            } else if let next = event.conversation, !next.isEmpty, next.utf8.count <= 256 {
+                conversation = next
+            } else {
+                close()
                 return
             }
             snapshot = []
@@ -367,6 +417,9 @@ final class AgentBridge {
             if snapshot != nil {
                 snapshot?.append(row)
             } else if isReady {
+                if row.kind == .user {
+                    optimisticUserRow = nil
+                }
                 if let index = rowIndices[row.id] {
                     rows[index] = row
                 } else {
@@ -382,6 +435,7 @@ final class AgentBridge {
                 rowIndices[row.id] = index
             }
             self.snapshot = nil
+            optimisticUserRow = nil
             applyStatus(event)
             applyConfig(event)
             isReady = true
@@ -390,9 +444,13 @@ final class AgentBridge {
         case .reply:
             guard let id = event.id, id == pendingSend else { return }
             requestTimeout?.cancel()
-            pendingSend = nil
-            sendRejected = event.accepted != true
-            if !sendRejected { draft = "" }
+            if event.accepted == true {
+                pendingSend = nil
+                pendingSendText = nil
+                sendRejected = false
+            } else {
+                failPendingSend()
+            }
             applyStatus(event)
         case .config:
             guard isReady else { return }
@@ -405,11 +463,43 @@ final class AgentBridge {
             configRejected = event.accepted != true
             applyConfig(event)
             applyStatus(event)
+        case .newConversationReply:
+            guard let id = event.id, id == pendingNewConversation else { return }
+            newConversationTimeout?.cancel()
+            pendingNewConversation = nil
+            newConversationRejected = event.accepted != true
+            if !newConversationRejected {
+                if let next = event.conversation, !next.isEmpty, next.utf8.count <= 256 {
+                    conversation = next
+                }
+                rows = []
+                rowIndices.removeAll(keepingCapacity: true)
+                snapshot = nil
+                optimisticUserRow = nil
+                sendRejected = false
+                configRejected = false
+            }
+            applyConfig(event)
+            applyStatus(event)
+        }
+    }
+
+    private func failPendingSend() {
+        let failedText = pendingSendText
+        pendingSend = nil
+        pendingSendText = nil
+        optimisticUserRow = nil
+        sendRejected = true
+        if draft.isEmpty, let failedText {
+            draft = failedText
         }
     }
 
     private func applyStatus(_ event: Event) {
-        if let busy = event.busy { isBusy = busy }
+        if let busy = event.busy {
+            isBusy = busy
+            if !busy, pendingSend == nil { optimisticUserRow = nil }
+        }
         if let waiting = event.waiting { isWaiting = waiting }
     }
 

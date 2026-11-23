@@ -6009,6 +6009,22 @@
         }
       }
     },
+    "New Conversation" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "새로운 대화"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新对话"
+          }
+        }
+      }
+    },
     "New Desktop Widget" : {
       "localizations" : {
         "ko" : {
@@ -11137,6 +11153,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Agent 未确认收到消息。"
+          }
+        }
+      }
+    },
+    "The agent did not start a new conversation." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "에이전트가 새로운 대화를 시작하지 않았습니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agent 未开始新对话。"
           }
         }
       }

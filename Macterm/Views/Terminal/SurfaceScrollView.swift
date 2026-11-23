@@ -87,6 +87,24 @@ final class SurfaceScrollView: NSScrollView {
     /// guaranteed alive. Cleared by `PaneSurface.destroy`.
     var onOrphaned: (() -> Void)?
 
+    /// Last pointer shape requested by libghostty, preserved while an overlay
+    /// suppresses `documentCursor` so switching back to the terminal restores it.
+    private var surfaceDocumentCursor: NSCursor?
+
+    /// Suppresses `documentCursor` while a sibling overlay covers the terminal,
+    /// preventing the scroll view's cursor rect from leaking through.
+    var suppressesDocumentCursor = false {
+        didSet {
+            guard suppressesDocumentCursor != oldValue else { return }
+            syncDocumentCursor()
+        }
+    }
+
+    private func syncDocumentCursor() {
+        documentCursor = suppressesDocumentCursor ? nil : surfaceDocumentCursor
+        window?.invalidateCursorRects(for: self)
+    }
+
     /// Re-parent into `host` (idempotent; sized to fill it).
     func adopt(into host: NSView) {
         guard superview !== host else { return }
@@ -175,7 +193,11 @@ final class SurfaceScrollView: NSScrollView {
         // NSScrollView applies documentCursor over the document area, which
         // is exactly the surface. Same mechanism as Ghostty's own scroll view.
         surfaceView.onMouseShapeChange = { [weak self] cursor in
-            self?.documentCursor = cursor
+            guard let self else { return }
+            surfaceDocumentCursor = cursor
+            if !suppressesDocumentCursor {
+                documentCursor = cursor
+            }
         }
     }
 

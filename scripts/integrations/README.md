@@ -23,6 +23,7 @@ For a test without installation, run `pi -e /path/to/macterm-pi-bridge.ts` in th
 - Press <kbd>Return</kbd> to send a message. You can also click **Send**.
 - Press <kbd>Shift</kbd>+<kbd>Return</kbd> to add a new line.
 - Use the model and speed controls below the input box to switch the active model or thinking level when the agent supports them.
+- Click **New Conversation** to start a new conversation in the same pane.
 - Click **Stop** to stop the current turn. The agent process stays open.
 - Click **Show Terminal** for approval requests, passwords, slash commands, and other terminal controls.
 - Click **Show Agent GUI** in the pane's top-right corner to show the same conversation again.
