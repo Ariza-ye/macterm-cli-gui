@@ -237,6 +237,8 @@ targets:
           HELPERS_DIR="$BUILT_PRODUCTS_DIR/$CONTENTS_FOLDER_PATH/Helpers"
           mkdir -p "$HELPERS_DIR"
           cp "$BUILT_PRODUCTS_DIR/macterm-icon-renderer" "$HELPERS_DIR/macterm-icon-renderer"
+          # ACP agent bridges and shell-integration command interception hooks.
+          sh "$SRCROOT/scripts/bundle-agent-integrations.sh"
 
   # The bundled control CLI (`macterm`). Shares ControlProtocol.swift with the
   # app target so the wire codec can never drift between the two,

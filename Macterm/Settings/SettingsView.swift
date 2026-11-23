@@ -13,6 +13,7 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
     case appearance = "Appearance"
     case animations = "Animations"
     case intelligence = "Intelligence"
+    case agents = "Agents"
     case quickTerminal = "Quick Terminal"
     case widgets = "Widgets"
     case passwords = "Password Manager"
@@ -35,6 +36,7 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
         case .appearance: String(localized: "Appearance", comment: "Settings pane")
         case .animations: String(localized: "Animations", comment: "Settings pane")
         case .intelligence: String(localized: "Intelligence", comment: "Settings pane")
+        case .agents: String(localized: "Agents", comment: "Settings pane")
         case .quickTerminal: String(localized: "Quick Terminal", comment: "Settings pane")
         case .widgets: String(localized: "Widgets", comment: "Settings pane")
         case .passwords: String(localized: "Password Manager", comment: "Settings pane")
@@ -51,6 +53,7 @@ private enum SettingsPane: String, CaseIterable, Identifiable {
         case .appearance: "paintpalette"
         case .animations: "wand.and.sparkles"
         case .intelligence: "apple.intelligence"
+        case .agents: "bubble.left.and.text.bubble.right"
         case .quickTerminal: "rectangle.bottomthird.inset.filled"
         case .widgets: "widget.small"
         case .keymaps: "keyboard"
@@ -118,6 +121,7 @@ struct SettingsView: View {
         case .appearance: AppearanceSettings()
         case .animations: AnimationsSettings()
         case .intelligence: IntelligenceSettings()
+        case .agents: AgentsSettings()
         case .quickTerminal: QuickTerminalSettings()
         case .widgets: WidgetsSettings()
         case .keymaps: KeymapSettings()

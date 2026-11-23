@@ -443,6 +443,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // get a `starting` error until installResponders attaches the
         // handler.
         controlServer.start()
+        AgentInterceptStore.shared.syncShellScripts()
         // Connect to the session server early: this replaces a server that
         // an older build left running (design/002) before most panes ask it
         // for their sessions. A pane's `zmx connect` starts the server too,

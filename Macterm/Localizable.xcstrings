@@ -859,6 +859,22 @@
         }
       }
     },
+    "A rule for “%@” already exists." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "“%@”에 대한 규칙이 이미 존재합니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "“%@”的规则已存在。"
+          }
+        }
+      }
+    },
     "A shortcut wants to run an action in %@. It can create projects and tabs. It can also type into your terminals." : {
       "localizations" : {
         "ko" : {
@@ -919,6 +935,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "小组件是桌面上的终端，与系统小组件并排。退出 Macterm 后，它的 shell 仍会继续运行。"
+          }
+        }
+      }
+    },
+    "ACP command" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ACP 명령"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ACP 命令"
           }
         }
       }
@@ -1068,6 +1100,22 @@
         }
       }
     },
+    "Add Rule" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "규칙 추가"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "添加规则"
+          }
+        }
+      }
+    },
     "Add a config file" : {
       "localizations" : {
         "ko" : {
@@ -1148,6 +1196,22 @@
         }
       }
     },
+    "Add an interception rule" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "가로채기 규칙 추가"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "添加拦截规则"
+          }
+        }
+      }
+    },
     "Add another project: %@" : {
       "localizations" : {
         "ko" : {
@@ -1192,6 +1256,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Agent 正在处理"
+          }
+        }
+      }
+    },
+    "Agents" : {
+      "comment" : "Settings pane",
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "에이전트"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "智能体"
           }
         }
       }
@@ -1452,6 +1533,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Apple 智能不可用。请在系统设置中打开它。"
+          }
+        }
+      }
+    },
+    "Applies to local zsh, bash, and fish panes. Set MACTERM_NO_AGENT_GUI=1 to run the terminal version instead." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "로컬 zsh, bash 및 fish 페인에 적용됩니다. 터미널 버전을 실행하려면 MACTERM_NO_AGENT_GUI=1을 설정하십시오."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "适用于本地 zsh、bash 和 fish 窗格。设置 MACTERM_NO_AGENT_GUI=1 可改用终端版本运行。"
           }
         }
       }
@@ -1792,6 +1889,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "浏览此项目中的文件和文件夹"
+          }
+        }
+      }
+    },
+    "Built-in" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "기본 제공"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "内置"
           }
         }
       }
@@ -2151,6 +2264,22 @@
         }
       }
     },
+    "Changes take effect at the next prompt in open shells. Rules only intercept bare commands or --conversation ID." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "변경 사항은 열려 있는 셸의 다음 프롬프트에서 적용됩니다. 규칙은 인자가 없는 명령이나 --conversation ID만 가로챕니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "更改会在已打开 shell 的下一个提示符处生效。规则仅拦截无参数命令或 --conversation ID。"
+          }
+        }
+      }
+    },
     "Channel" : {
       "localizations" : {
         "ko" : {
@@ -2457,6 +2586,22 @@
         }
       }
     },
+    "Close all quotes in the ACP command." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "ACP 명령의 모든 따옴표를 닫으십시오."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请闭合 ACP 命令中的所有引号。"
+          }
+        }
+      }
+    },
     "Close running process?" : {
       "localizations" : {
         "ko" : {
@@ -2565,6 +2710,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "命令已完成"
+          }
+        }
+      }
+    },
+    "Command Interception Rules" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "명령 가로채기 규칙"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "命令拦截规则"
           }
         }
       }
@@ -3171,6 +3332,22 @@
         }
       }
     },
+    "Display name" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "표시 이름"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "显示名称"
+          }
+        }
+      }
+    },
     "Don't Allow" : {
       "comment" : "Button of the Shortcuts permission alert",
       "localizations" : {
@@ -3254,6 +3431,22 @@
         }
       }
     },
+    "Edit Interception Rule" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "가로채기 규칙 편집"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "编辑拦截规则"
+          }
+        }
+      }
+    },
     "Edit Path" : {
       "localizations" : {
         "ko" : {
@@ -3282,6 +3475,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "编辑小组件"
+          }
+        }
+      }
+    },
+    "Edit…" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "편집…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "编辑…"
           }
         }
       }
@@ -3330,6 +3539,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "输入路径…"
+          }
+        }
+      }
+    },
+    "Enter the ACP v1 stdio command that Macterm runs for this terminal command." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 터미널 명령에 대해 Macterm이 실행할 ACP v1 stdio 명령을 입력하십시오."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "输入 Macterm 为此终端命令运行的 ACP v1 stdio 命令。"
           }
         }
       }
@@ -4409,6 +4634,22 @@
         }
       }
     },
+    "Intercept agent commands" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "에이전트 명령 가로채기"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "拦截智能体命令"
+          }
+        }
+      }
+    },
     "Invalid file. Fix it in an editor to use it." : {
       "localizations" : {
         "ko" : {
@@ -5381,6 +5622,22 @@
         }
       }
     },
+    "Macterm stops intercepting “%@” at the next shell prompt." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Macterm이 다음 셸 프롬프트에서 “%@” 가로채기를 중지합니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Macterm 将在下一个 shell 提示符处停止拦截“%@”。"
+          }
+        }
+      }
+    },
     "Macterm types this into the shell of the new tab when the shell starts. Leave it empty for a plain shell." : {
       "localizations" : {
         "ko" : {
@@ -5781,6 +6038,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "新建分组"
+          }
+        }
+      }
+    },
+    "New Interception Rule" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "새로운 가로채기 규칙"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新建拦截规则"
           }
         }
       }
@@ -7086,6 +7359,22 @@
         }
       }
     },
+    "Open matching terminal commands in Macterm's Agent GUI through the bundled ACP bridge. Non-interactive runs and other arguments pass through to the original command." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "번들된 ACP 브리지를 통해 일치하는 터미널 명령을 Macterm의 에이전트 GUI에서 엽니다. 비대화형 실행 및 기타 인자는 원래 명령으로 전달됩니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "通过内置 ACP 桥接在 Macterm 的智能体界面中打开匹配的终端命令。非交互式运行与其他参数会透传给原始命令。"
+          }
+        }
+      }
+    },
     "Open the command palette in the frontmost window." : {
       "localizations" : {
         "ko" : {
@@ -7178,6 +7467,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "打开此本地目标可能会执行代码。"
+          }
+        }
+      }
+    },
+    "Optional" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "선택 사항"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "可选"
           }
         }
       }
@@ -8386,6 +8691,22 @@
         }
       }
     },
+    "Remove interception rule?" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "가로채기 규칙을 제거하시겠습니까?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "要移除拦截规则吗？"
+          }
+        }
+      }
+    },
     "Remove items with running processes?" : {
       "localizations" : {
         "ko" : {
@@ -8430,6 +8751,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "要移除有进程正在运行的项目吗？"
+          }
+        }
+      }
+    },
+    "Remove rule" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "규칙 제거"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移除规则"
           }
         }
       }
@@ -12205,6 +12542,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "使用已存储的密码"
+          }
+        }
+      }
+    },
+    "Use letters, digits, underscores, or hyphens, and avoid reserved shell commands." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "문자, 숫자, 밑줄 또는 하이픈만 사용하고 셸 예약 명령은 피하십시오."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请使用字母、数字、下划线或连字符，并避免使用 shell 保留命令。"
           }
         }
       }

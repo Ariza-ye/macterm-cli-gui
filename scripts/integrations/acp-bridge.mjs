@@ -276,7 +276,7 @@ export async function runAcpBridge(config, runtime = {}) {
     const path = `${directory}/bridge.sock`;
     const agent = spawn(config.command, config.args, {
         cwd,
-        env,
+        env: { ...env, MACTERM_NO_AGENT_GUI: "1" },
         stdio: ["pipe", "pipe", "inherit"],
     });
     const terminal = createInterface({ input: inputStream, output: outputStream, prompt: config.prompt });

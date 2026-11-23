@@ -31,7 +31,11 @@ Pi stores the conversation. Macterm reads the current branch from Pi and receive
 
 ## ACP agents (OpenCode, Antigravity, and others)
 
-`scripts/integrations/macterm-acp` bridges any ACP v1 stdio agent to a local pane in a Macterm main window. It needs Node.js 22 or later.
+Macterm bundles `macterm-acp` and enables automatic command interception by default for local zsh, bash, and fish panes. When you run bare `agy` or `opencode` (or with `--conversation ID`) in a local pane in a main window, Macterm opens the native Agent GUI automatically. Other arguments and non-interactive runs pass through to the original command.
+
+Manage the toggle and custom ACP interception rules in **Settings → Agents**. To bypass interception for one command, run `MACTERM_NO_AGENT_GUI=1 agy` or `command agy`.
+
+You can also run the bridge scripts directly from this repository (requires Node.js 22 or later):
 
 ### OpenCode
 

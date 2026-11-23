@@ -46,5 +46,12 @@ enum EnvironmentSetup {
             let existingPath = ProcessInfo.processInfo.environment["PATH"] ?? ""
             setenv("PATH", existingPath.isEmpty ? binDir : "\(binDir):\(existingPath)", 1)
         }
+
+        // Bundled ACP agent bridge directory for shell command interception.
+        if let integrationsDir = Bundle.main.resourceURL?.appendingPathComponent("integrations", isDirectory: true).path,
+           FileManager.default.fileExists(atPath: integrationsDir + "/macterm-acp")
+        {
+            setenv("MACTERM_INTEGRATIONS_DIR", integrationsDir, 1)
+        }
     }
 }
