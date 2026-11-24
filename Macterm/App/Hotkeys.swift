@@ -70,6 +70,8 @@ enum HotkeyAction: String, CaseIterable, Identifiable {
     case passwordManager = "password_manager"
     case files
     case capturePaletteScreenshot = "capture_palette_screenshot"
+    case agentNewConversation = "agent_new_conversation"
+    case agentShowTerminal = "agent_show_terminal"
 
     var id: String { rawValue }
 
@@ -113,6 +115,12 @@ enum HotkeyAction: String, CaseIterable, Identifiable {
     /// hot key since the feature shipped — unflagging it would be a silent
     /// regression of that. Settings shows its checkbox ticked and disabled.
     var isAlwaysGlobal: Bool { self == .toggleQuickTerminal }
+
+    /// Actions that only apply to panes with an active Agent GUI session.
+    /// Regular terminal panes let these chords pass through when unbound to an agent.
+    var isAgentPaneAction: Bool {
+        self == .agentNewConversation || self == .agentShowTerminal
+    }
 
     var defaultShortcut: String {
         switch self {
@@ -222,6 +230,9 @@ enum HotkeyAction: String, CaseIterable, Identifiable {
         // needs it, and it acts on the palette as it stands, so it's bound
         // to be pressed with the palette up.
         case .capturePaletteScreenshot: "none"
+        // Unbound by default so Agent GUI shortcuts do not claim existing terminal chords.
+        case .agentNewConversation: "none"
+        case .agentShowTerminal: "none"
         }
     }
 }
@@ -728,5 +739,38 @@ enum HotkeyRegistry {
             conflicting.formUnion(ids)
         }
         return conflicting
+    }
+
+    /// Titles of all other bindings (built-in actions and custom palettes)
+    /// that currently share `action`'s chord.
+    @MainActor
+    static func conflictPartners(
+        for action: HotkeyAction,
+        customPalettes: [CustomPaletteStore.Entry] = [],
+        palettes: PaletteHotkeys = .shared
+    ) -> [String] {
+        guard let targetKey = conflictKey(for: selectedShortcutString(for: action)) else { return [] }
+        var partners: [String] = []
+        for other in HotkeyAction.allCases where other != action {
+            if conflictKey(for: selectedShortcutString(for: other)) == targetKey {
+                partners.append(other.title)
+            }
+        }
+        for entry in customPalettes
+            where conflictKey(for: palettes.selectedShortcutString(paletteID: entry.id)) == targetKey
+        {
+            partners.append(entry.pill.title)
+        }
+        return partners
+    }
+
+    /// Formats a tooltip title with the action's current shortcut when bound.
+    /// Reads `Preferences.shared.hotkeyVersion` so SwiftUI callers refresh on rebinds.
+    @MainActor
+    static func tooltip(_ title: String, for action: HotkeyAction) -> String {
+        _ = Preferences.shared.hotkeyVersion
+        let symbols = displaySymbols(for: selectedShortcutString(for: action))
+        guard !symbols.isEmpty else { return title }
+        return "\(title) (\(symbols.joined()))"
     }
 }

@@ -339,6 +339,23 @@ extension AppCommand {
             // hides the palette row.
             guard PasswordPromptMonitor.shared.canAutofillFocused else { return nil }
             return { PasswordPromptMonitor.shared.autofillFocused() }
+        case .agentNewConversation:
+            guard let agent = Self.focusedAgentContext(in: ctx),
+                  agent.bridge.showsGUI(in: agent.windowID),
+                  !agent.surface.isReadOnly
+            else { return nil }
+            return {
+                agent.bridge.newConversation(from: agent.surface)
+                if let input = agent.surface.nsView?.agentPaneFocus?.input {
+                    input.window?.makeFirstResponder(input)
+                }
+            }
+        case .agentShowTerminal:
+            guard let agent = Self.focusedAgentContext(in: ctx) else { return nil }
+            return {
+                let nextVisible = !agent.bridge.showsGUI(in: agent.windowID)
+                agent.bridge.setGUIVisible(nextVisible, in: agent.windowID)
+            }
         case .passwordManager:
             // The master switch covers on-demand filling too.
             guard Preferences.shared.passwordManagerEnabled else { return nil }
@@ -431,5 +448,35 @@ extension AppCommand {
         guard mine.count > 1 else { return nil }
         let ignored = mine.dropFirst().map(\.url.lastPathComponent).joined(separator: ", ")
         return String(localized: "Using \(mine[0].url.lastPathComponent) and ignoring the duplicate \(ignored)")
+    }
+
+    private struct FocusedAgentContext {
+        let bridge: AgentBridge
+        let surface: PaneSurface
+        let windowID: UUID
+    }
+
+    /// Resolves the active Agent GUI bridge and window surface for the focused pane.
+    @MainActor
+    private static func focusedAgentContext(
+        in ctx: AppCommandContext,
+        registry: AgentRegistry = .shared,
+        settings: AgentSettings = .shared
+    ) -> FocusedAgentContext? {
+        guard settings.guiEnabled,
+              let projectID = ctx.appState.activeProjectID,
+              let pane = ctx.appState.focusedPane(for: projectID),
+              let bridge = registry.bridge(for: pane),
+              bridge.isReady
+        else { return nil }
+        let surface: PaneSurface = if let keyWindowID = ctx.appState.keyWindowID,
+                                      let windowSurface = SurfaceRegistry.shared.existingSurface(for: pane, in: .window(keyWindowID))
+        {
+            windowSurface
+        } else {
+            SurfaceRegistry.shared.preferredSurface(of: pane)
+        }
+        guard !surface.isDestroyed, let windowID = surface.windowID else { return nil }
+        return FocusedAgentContext(bridge: bridge, surface: surface, windowID: windowID)
     }
 }

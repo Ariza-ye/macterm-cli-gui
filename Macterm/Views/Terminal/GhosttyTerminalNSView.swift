@@ -1148,8 +1148,8 @@ final class GhosttyTerminalNSView: NSView, ScrollbarSurface {
         // The two paths must agree; they read the same policy microseconds
         // apart, off the same live tty state.
         if yieldsToProgram?(event) == true { return false }
-        // Check all configurable hotkey actions
-        if HotkeyAction.allCases.contains(where: { HotkeyRegistry.matches(event, action: $0) }) { return true }
+        // Check all configurable hotkey actions (agent-pane actions pass through in regular terminals).
+        if HotkeyAction.allCases.contains(where: { !$0.isAgentPaneAction && HotkeyRegistry.matches(event, action: $0) }) { return true }
         // And the custom palettes' chords (`PaletteHotkeys`), the same
         // answer `MainAppResponder` gives.
         if PaletteHotkeys.shared.matchingPaletteID(for: event) != nil { return true }

@@ -2318,7 +2318,7 @@ private struct KeymapSettings: View {
 /// `SidebarProjectHeader`). The badge is always in the view, and only its
 /// opacity and hit testing change: a view that comes and goes in a row of the
 /// table changes the row's structure.
-private struct KeybindButton: View {
+struct KeybindButton: View {
     let shortcut: String
     let isCapturing: Bool
     let isUnmapped: Bool
@@ -2461,7 +2461,7 @@ private struct KeymapRowMenu: NSViewRepresentable {
     }
 }
 
-private struct HotkeyCaptureView: NSViewRepresentable {
+struct HotkeyCaptureView: NSViewRepresentable {
     @Binding
     var capturingActionID: String?
     /// A bare Delete or Forward Delete while recording: clear the row. A
@@ -2476,6 +2476,7 @@ private struct HotkeyCaptureView: NSViewRepresentable {
 
     func updateNSView(_: NSView, context: Context) {
         context.coordinator.capturingActionID = capturingActionID
+        context.coordinator.onCancel = { capturingActionID = nil }
     }
 
     func makeCoordinator() -> Coordinator {
@@ -2495,6 +2496,7 @@ private struct HotkeyCaptureView: NSViewRepresentable {
     final class Coordinator: NSObject {
         let view: NSView
         var capturingActionID: String?
+        var onCancel: (() -> Void)?
         private var monitor: Any?
         private let onClear: (String) -> Void
         private let onCapture: (NSEvent, String) -> Void
@@ -2509,6 +2511,7 @@ private struct HotkeyCaptureView: NSViewRepresentable {
                 if Int(event.keyCode) == kVK_Escape {
                     self.capturingActionID = nil
                     HotkeyCaptureState.shared.isCapturing = false
+                    self.onCancel?()
                     return nil
                 }
                 let isBareDelete = [kVK_Delete, kVK_ForwardDelete].contains(Int(event.keyCode))

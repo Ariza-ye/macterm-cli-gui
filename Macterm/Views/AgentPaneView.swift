@@ -121,6 +121,7 @@ struct AgentPaneView: View {
             .disabled(!canStartAction)
             .fixedSize()
             .pointingHandCursor(canStartAction)
+            .help(HotkeyRegistry.tooltip(AppCommand.agentNewConversation.title, for: .agentNewConversation))
             Button(action: showTerminal) {
                 Label("Show Terminal", systemImage: "terminal")
             }
@@ -128,6 +129,7 @@ struct AgentPaneView: View {
             .controlSize(.small)
             .fixedSize()
             .pointingHandCursor()
+            .help(HotkeyRegistry.tooltip(AppCommand.agentShowTerminal.title, for: .agentShowTerminal))
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)

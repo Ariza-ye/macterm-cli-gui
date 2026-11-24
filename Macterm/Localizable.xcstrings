@@ -10675,6 +10675,22 @@
         }
       }
     },
+    "Shortcuts apply to the focused Agent pane. Pressing the Show Terminal shortcut again returns to the Agent GUI." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "단축키는 현재 포커스된 에이전트 페인에 적용됩니다. 터미널 보기 단축키를 다시 누르면 Agent GUI로 돌아갑니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "快捷键作用于当前聚焦的智能体窗格。再次按下“显示终端”快捷键可返回 Agent GUI。"
+          }
+        }
+      }
+    },
     "Show" : {
       "comment" : "Notification action that shows the pane",
       "localizations" : {

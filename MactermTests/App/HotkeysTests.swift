@@ -403,6 +403,41 @@ struct HotkeysTests {
     }
 
     @Test
+    func agent_shortcuts_ship_unbound_and_report_conflicts_and_tooltips() {
+        #expect(HotkeyAction.agentNewConversation.defaultShortcut == "none")
+        #expect(HotkeyAction.agentShowTerminal.defaultShortcut == "none")
+        #expect(HotkeyAction.agentNewConversation.title == "New Conversation")
+        #expect(HotkeyAction.agentShowTerminal.title == "Show Terminal")
+        #expect(AppCommand.agentNewConversation.category == .panes)
+        #expect(AppCommand.agentShowTerminal.category == .panes)
+        #expect(HotkeyAction.agentNewConversation.isAgentPaneAction)
+        #expect(HotkeyAction.agentShowTerminal.isAgentPaneAction)
+        #expect(!HotkeyAction.newTab.isAgentPaneAction)
+
+        let originalNew = HotkeyRegistry.selectedShortcutString(for: .agentNewConversation)
+        let originalShow = HotkeyRegistry.selectedShortcutString(for: .agentShowTerminal)
+        defer {
+            HotkeyRegistry.setShortcutString(originalNew, for: .agentNewConversation)
+            HotkeyRegistry.setShortcutString(originalShow, for: .agentShowTerminal)
+        }
+
+        HotkeyRegistry.setShortcutString("disabled", for: .agentNewConversation)
+        HotkeyRegistry.setShortcutString("disabled", for: .agentShowTerminal)
+        #expect(HotkeyRegistry.tooltip("New Conversation", for: .agentNewConversation) == "New Conversation")
+        #expect(HotkeyRegistry.conflictPartners(for: .agentNewConversation).isEmpty)
+
+        // Conflicts with existing app actions and with the sibling agent shortcut are both detected.
+        HotkeyRegistry.setShortcutString("cmd+shift+n", for: .agentNewConversation)
+        HotkeyRegistry.setShortcutString("cmd+shift+n", for: .agentShowTerminal)
+        #expect(HotkeyRegistry.tooltip("New Conversation", for: .agentNewConversation) == "New Conversation (⌘⇧N)")
+        #expect(HotkeyRegistry.conflictPartners(for: .agentNewConversation) == ["Show Terminal"])
+        #expect(HotkeyRegistry.conflictPartners(for: .agentShowTerminal) == ["New Conversation"])
+
+        HotkeyRegistry.setShortcutString("cmd+t", for: .agentNewConversation)
+        #expect(HotkeyRegistry.conflictPartners(for: .agentNewConversation).contains("New Tab"))
+    }
+
+    @Test
     func no_two_actions_ship_the_same_default_shortcut() {
         // Guards the swap above (and any future default): two actions on one
         // chord surface as a conflict in Settings → Keymaps, and whichever

@@ -92,7 +92,7 @@ struct TerminalPane: View {
                         ModePill(
                             title: String(localized: "Show Agent GUI"),
                             systemImage: "bubble.left.and.text.bubble.right",
-                            help: String(localized: "Show Agent GUI")
+                            help: HotkeyRegistry.tooltip(String(localized: "Show Agent GUI"), for: .agentShowTerminal)
                         ) {
                             onFocus()
                             agent.setGUIVisible(true, in: windowID)

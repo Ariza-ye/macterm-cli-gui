@@ -56,6 +56,8 @@ enum AppCommand: String, CaseIterable, Identifiable {
     case restartSession
     case explainOutput
     case autofillPassword
+    case agentNewConversation
+    case agentShowTerminal
     // Projects
     case openProject
     case newRemoteProject
@@ -146,6 +148,8 @@ enum AppCommand: String, CaseIterable, Identifiable {
         case .restartSession: "Restart Session"
         case .explainOutput: "Explain Output"
         case .autofillPassword: "Autofill Password"
+        case .agentNewConversation: "New Conversation"
+        case .agentShowTerminal: "Show Terminal"
         case .passwordManager: "Password Manager"
         case .openProject: "Open Project"
         case .newRemoteProject: "New Remote Project"
@@ -218,7 +222,9 @@ enum AppCommand: String, CaseIterable, Identifiable {
              .readOnlyMode,
              .restartSession,
              .explainOutput,
-             .autofillPassword: .panes
+             .autofillPassword,
+             .agentNewConversation,
+             .agentShowTerminal: .panes
         case .openProject,
              .newRemoteProject,
              .renameProject,
@@ -302,6 +308,8 @@ enum AppCommand: String, CaseIterable, Identifiable {
         case .restartSession: .restartSession
         case .explainOutput: .explainOutput
         case .autofillPassword: .autofillPassword
+        case .agentNewConversation: .agentNewConversation
+        case .agentShowTerminal: .agentShowTerminal
         case .passwordManager: .passwordManager
         case .files: .files
         case .capturePaletteScreenshot: .capturePaletteScreenshot

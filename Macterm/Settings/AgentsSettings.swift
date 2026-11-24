@@ -1,16 +1,25 @@
 import AppKit
 import SwiftUI
 
-/// Settings → Agents: controls Agent GUI appearance, automatic terminal command
-/// interception, and built-in/custom interception rules.
+/// Settings → Agents: controls Agent GUI feature toggle, shortcuts, appearance,
+/// automatic terminal command interception, and built-in/custom interception rules.
 struct AgentsSettings: View {
+    private static let shortcutActions: [HotkeyAction] = [
+        .agentNewConversation,
+        .agentShowTerminal,
+    ]
+    private static let keybindColumnWidth: CGFloat = 120
+
+    @Environment(AppState.self) private var appState
     private var agentSettings: AgentSettings { .shared }
     private var store: AgentInterceptStore { .shared }
     private var appearanceSettings: AgentAppearanceSettings { .shared }
+    private var preferences: Preferences { .shared }
 
     @State private var fontCatalog: AgentFontCatalog = .empty
     @State private var editor: AgentInterceptEditorRequest?
     @State private var pendingRemoval: AgentInterceptRule?
+    @State private var capturingActionID: String?
 
     var body: some View {
         let appearance = appearanceSettings.appearance
@@ -36,6 +45,22 @@ struct AgentsSettings: View {
                     """))
                     .settingsDescription()
                 }
+            }
+
+            Section {
+                Group {
+                    ForEach(Self.shortcutActions) { action in
+                        agentShortcutRow(action)
+                    }
+                }
+                .disabled(!guiEnabled)
+
+                Text(String(localized: """
+                Shortcuts apply to the focused Agent pane. Pressing the Show Terminal shortcut again returns to the Agent GUI.
+                """))
+                .settingsSecondaryText()
+            } header: {
+                Text("Keybinds")
             }
 
             Section {
@@ -160,6 +185,32 @@ struct AgentsSettings: View {
             }
         }
         .formStyle(.grouped)
+        .background(
+            HotkeyCaptureView(
+                capturingActionID: $capturingActionID,
+                onClear: { rowID in
+                    if let action = HotkeyAction(rawValue: rowID) {
+                        clearShortcut(for: action)
+                    }
+                },
+                onCapture: { event, rowID in
+                    guard let action = HotkeyAction(rawValue: rowID),
+                          let shortcut = HotkeyRegistry.shortcutString(from: event)
+                    else { return }
+                    HotkeyRegistry.setShortcutString(shortcut, for: action)
+                    stopCapturing()
+                }
+            )
+        )
+        .onChange(of: guiEnabled) { _, enabled in
+            if !enabled { stopCapturing() }
+        }
+        .onAppear {
+            appState.customPalettes.reloadIfChanged()
+        }
+        .onDisappear {
+            stopCapturing()
+        }
         .task {
             fontCatalog = await AgentFontCatalog.loadCached()
         }
@@ -183,6 +234,62 @@ struct AgentsSettings: View {
         } message: {
             Text("Macterm stops intercepting “\(pendingRemoval?.command ?? "")” at the next shell prompt.")
         }
+    }
+
+    @ViewBuilder
+    private func agentShortcutRow(_ action: HotkeyAction) -> some View {
+        let shortcut = currentShortcut(for: action)
+        let isCapturing = capturingActionID == action.id
+        let isUnmapped = HotkeyRegistry.isUnbound(shortcut)
+        let partners = HotkeyRegistry.conflictPartners(
+            for: action,
+            customPalettes: appState.customPalettes.entries
+        )
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 10) {
+                Text(verbatim: action.title)
+                    .dimsWhenDisabled()
+                if !partners.isEmpty {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(MactermTheme.warning)
+                }
+                Spacer(minLength: 0)
+                KeybindButton(
+                    shortcut: shortcut,
+                    isCapturing: isCapturing,
+                    isUnmapped: isUnmapped,
+                    onRecord: {
+                        HotkeyCaptureState.shared.isCapturing = true
+                        capturingActionID = action.id
+                    },
+                    onClear: { clearShortcut(for: action) }
+                )
+                .frame(width: Self.keybindColumnWidth)
+            }
+            if !partners.isEmpty {
+                Text("Conflicts with \(partners.joined(separator: ", "))")
+                    .font(.system(size: 11))
+                    .foregroundStyle(MactermTheme.warning)
+            }
+        }
+    }
+
+    private func currentShortcut(for action: HotkeyAction) -> String {
+        _ = preferences.hotkeyVersion
+        return HotkeyRegistry.selectedShortcutString(for: action)
+    }
+
+    private func clearShortcut(for action: HotkeyAction) {
+        HotkeyRegistry.setShortcutString("disabled", for: action)
+        if capturingActionID == action.id {
+            stopCapturing()
+        }
+    }
+
+    private func stopCapturing() {
+        capturingActionID = nil
+        HotkeyCaptureState.shared.isCapturing = false
     }
 
     private var guiEnabledBinding: Binding<Bool> {

@@ -1,3 +1,4 @@
+import AppKit
 import Darwin
 import Foundation
 @testable import Macterm
@@ -1005,6 +1006,114 @@ struct AgentBridgeTests {
         try await waitUntil { bridge.pendingSend == nil && bridge.sendRejected }
         #expect(bridge.draft == "Check this")
         #expect(bridge.draftAttachments == [imageAttachment])
+    }
+
+    @Test
+    func agent_app_commands_trigger_new_conversation_and_toggle_terminal_visibility() async throws {
+        let (_, _, appState, projectStore) = makeHandler()
+        let pane = try seedPane(appState, projectStore)
+        let windowID = UUID()
+        let surface = SurfaceRegistry.shared.surface(for: pane, in: .window(windowID))
+        let originalGUIEnabled = AgentSettings.shared.guiEnabled
+        let originalNewShortcut = HotkeyRegistry.selectedShortcutString(for: .agentNewConversation)
+        let originalShowShortcut = HotkeyRegistry.selectedShortcutString(for: .agentShowTerminal)
+        defer {
+            AgentSettings.shared.guiEnabled = originalGUIEnabled
+            HotkeyRegistry.setShortcutString(originalNewShortcut, for: .agentNewConversation)
+            HotkeyRegistry.setShortcutString(originalShowShortcut, for: .agentShowTerminal)
+            AgentRegistry.shared.disconnect(pane: pane)
+            SurfaceRegistry.shared.destroySurfaces(of: pane)
+        }
+        AgentSettings.shared.guiEnabled = true
+
+        let ctx = AppCommandContext(appState: appState, projectStore: projectStore)
+
+        // No active agent bridge: both commands are unavailable.
+        #expect(AppCommand.agentNewConversation.action(in: ctx) == nil)
+        #expect(AppCommand.agentShowTerminal.action(in: ctx) == nil)
+
+        let (socketPath, serverFD, cleanup) = try makeListeningBridgeSocket(prefix: "agent")
+        defer { cleanup() }
+
+        let bridge = AgentBridge(
+            provider: .antigravity,
+            path: socketPath,
+            conversation: "conv-cmd",
+            token: UUID(),
+            windowID: windowID,
+            registry: .shared
+        )
+        AgentRegistry.shared.bind(bridge, toSession: pane.sessionName)
+
+        let peerFD = try await acceptClient(on: serverFD)
+        defer { close(peerFD) }
+        _ = try await readLine(from: peerFD) // hello
+
+        try writeFrame(["type": "snapshot", "conversation": "conv-cmd"], to: peerFD)
+        try writeFrame(["type": "snapshotEnd", "busy": false, "waiting": false], to: peerFD)
+        try await waitUntil { bridge.isReady }
+
+        #expect(bridge.showsGUI(in: windowID))
+
+        // New Conversation command works while Agent GUI is shown and sends the bridge command.
+        let newConvAction = try #require(AppCommand.agentNewConversation.action(in: ctx))
+        newConvAction()
+        let requestLine = try await readLine(from: peerFD)
+        let request = try #require(JSONSerialization.jsonObject(with: Data(requestLine.utf8)) as? [String: Any])
+        #expect(request["type"] as? String == "newConversation")
+        let requestID = try #require(request["id"] as? String)
+        try writeFrame([
+            "type": "newConversationReply",
+            "id": requestID,
+            "accepted": true,
+            "conversation": "conv-cmd-2",
+            "busy": false,
+            "waiting": false,
+        ], to: peerFD)
+        try await waitUntil { bridge.pendingNewConversation == nil && bridge.conversation == "conv-cmd-2" }
+
+        // Read-only surface disables New Conversation while keeping Show Terminal available.
+        surface.isReadOnly = true
+        #expect(AppCommand.agentNewConversation.action(in: ctx) == nil)
+        #expect(AppCommand.agentShowTerminal.action(in: ctx) != nil)
+        surface.isReadOnly = false
+
+        // Show Terminal hides Agent GUI; invoking it again returns to Agent GUI.
+        let showTerminalAction = try #require(AppCommand.agentShowTerminal.action(in: ctx))
+        showTerminalAction()
+        #expect(!bridge.showsGUI(in: windowID))
+        // New Conversation does not apply while viewing the terminal.
+        #expect(AppCommand.agentNewConversation.action(in: ctx) == nil)
+
+        let returnToGUIAction = try #require(AppCommand.agentShowTerminal.action(in: ctx))
+        returnToGUIAction()
+        #expect(bridge.showsGUI(in: windowID))
+
+        // Disabling Agent GUI globally makes both commands unavailable.
+        AgentSettings.shared.guiEnabled = false
+        #expect(AppCommand.agentNewConversation.action(in: ctx) == nil)
+        #expect(AppCommand.agentShowTerminal.action(in: ctx) == nil)
+        AgentSettings.shared.guiEnabled = true
+
+        // MainAppResponder dispatches bound chords for both actions.
+        HotkeyRegistry.setShortcutString("cmd+opt+k", for: .agentShowTerminal)
+        let responder = MainAppResponder(appState: appState, projectStore: projectStore)
+        let keyEvent = try #require(NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [.command, .option],
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            characters: "k",
+            charactersIgnoringModifiers: "k",
+            isARepeat: false,
+            keyCode: 40
+        ))
+        #expect(responder.handle(keyEvent) == .handled)
+        #expect(!bridge.showsGUI(in: windowID))
+        #expect(responder.handle(keyEvent) == .handled)
+        #expect(bridge.showsGUI(in: windowID))
     }
 
     private func makeListeningBridgeSocket(prefix: String) throws -> (String, Int32, () -> Void) {
