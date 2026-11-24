@@ -160,6 +160,7 @@ struct AgentPaneView: View {
                 minHeight: appearance.composerMinHeight,
                 maxHeight: maxEditorHeight,
                 submit: { bridge.submit(from: surface) },
+                canPaste: { pasteboard in canPasteAttachment(from: pasteboard) },
                 onPaste: { pasteboard in handlePaste(pasteboard) }
             )
             if hasComposerStatus {
@@ -344,6 +345,11 @@ struct AgentPaneView: View {
         } else {
             applySelection(panel.runModal())
         }
+    }
+
+    private func canPasteAttachment(from pasteboard: NSPasteboard) -> Bool {
+        !surface.isReadOnly && bridge.pendingSend == nil
+            && AgentAttachmentLoader.canLoadFromPasteboard(pasteboard)
     }
 
     private func handlePaste(_ pasteboard: NSPasteboard) -> Bool {
@@ -1295,6 +1301,7 @@ struct AgentComposer: NSViewRepresentable {
     let minHeight: CGFloat
     let maxHeight: CGFloat
     let submit: () -> Void
+    let canPaste: (NSPasteboard) -> Bool
     let onPaste: (NSPasteboard) -> Bool
 
     private static let inset = NSSize(width: 12, height: 8)
@@ -1302,7 +1309,9 @@ struct AgentComposer: NSViewRepresentable {
     final class InputView: NSTextView {
         weak var focus: AgentPaneFocus?
         var submit: (() -> Void)?
+        var canPaste: ((NSPasteboard) -> Bool)?
         var onPaste: ((NSPasteboard) -> Bool)?
+        var pasteboardProvider: () -> NSPasteboard = { .general }
 
         var placeholder = "" {
             didSet {
@@ -1369,12 +1378,30 @@ struct AgentComposer: NSViewRepresentable {
             if !event.isARepeat { submit?() }
         }
 
+        override func validateUserInterfaceItem(_ item: any NSValidatedUserInterfaceItem) -> Bool {
+            if item.action == #selector(paste(_:)) || item.action == #selector(pasteAsPlainText(_:)) {
+                guard isEditable else { return false }
+                if canPaste?(pasteboardProvider()) == true {
+                    return true
+                }
+            }
+            return super.validateUserInterfaceItem(item)
+        }
+
         override func paste(_ sender: Any?) {
             guard isEditable else { return }
-            if onPaste?(NSPasteboard.general) == true {
+            if onPaste?(pasteboardProvider()) == true {
                 return
             }
             super.paste(sender)
+        }
+
+        override func pasteAsPlainText(_ sender: Any?) {
+            guard isEditable else { return }
+            if onPaste?(pasteboardProvider()) == true {
+                return
+            }
+            super.pasteAsPlainText(sender)
         }
 
         override func becomeFirstResponder() -> Bool {
@@ -1455,6 +1482,7 @@ struct AgentComposer: NSViewRepresentable {
         guard let input = scroll.documentView as? InputView else { return }
         input.isEditable = isEditable
         input.submit = submit
+        input.canPaste = canPaste
         input.onPaste = onPaste
         input.placeholder = placeholder
         input.placeholderColor = MactermTheme.nsFgMuted

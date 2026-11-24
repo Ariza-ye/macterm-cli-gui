@@ -107,4 +107,69 @@ struct AgentComposerTests {
         #expect(!input.showsPlaceholder)
         #expect(try !hasVisiblePixels(in: input, rect: input.bounds))
     }
+
+    @Test
+    func imagePasteboardValidatesAndTriggersPasteOnPlainTextInputView() throws {
+        let (window, input) = try makeInput()
+        defer { _ = window }
+        input.isRichText = false
+
+        let rep = try #require(NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 8,
+            pixelsHigh: 8,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ))
+        let pngData = try #require(rep.representation(using: .png, properties: [:]))
+
+        let pasteboard = NSPasteboard.withUniqueName()
+        defer { pasteboard.releaseGlobally() }
+        pasteboard.clearContents()
+        pasteboard.setData(pngData, forType: .png)
+
+        input.pasteboardProvider = { pasteboard }
+        input.canPaste = { AgentAttachmentLoader.canLoadFromPasteboard($0) }
+
+        var pastedAttachments: [AgentAttachment] = []
+        input.onPaste = { pb in
+            switch AgentAttachmentLoader.loadFromPasteboard(pb, existing: pastedAttachments) {
+            case .notHandled:
+                return false
+            case let .handled(attachments, _):
+                pastedAttachments.append(contentsOf: attachments)
+                return true
+            }
+        }
+
+        let pasteMenuItem = NSMenuItem(title: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        let pastePlainMenuItem = NSMenuItem(
+            title: "Paste and Match Style",
+            action: #selector(NSTextView.pasteAsPlainText(_:)),
+            keyEquivalent: "V"
+        )
+
+        #expect(input.validateUserInterfaceItem(pasteMenuItem))
+        #expect(input.validateUserInterfaceItem(pastePlainMenuItem))
+
+        input.paste(nil)
+        #expect(pastedAttachments.count == 1)
+        #expect(pastedAttachments[0].kind == .image)
+        #expect(pastedAttachments[0].mimeType == "image/png")
+
+        input.pasteAsPlainText(nil)
+        #expect(pastedAttachments.count == 2)
+
+        input.isEditable = false
+        #expect(!input.validateUserInterfaceItem(pasteMenuItem))
+        #expect(!input.validateUserInterfaceItem(pastePlainMenuItem))
+        input.paste(nil)
+        input.pasteAsPlainText(nil)
+        #expect(pastedAttachments.count == 2)
+    }
 }

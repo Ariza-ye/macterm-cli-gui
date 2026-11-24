@@ -161,20 +161,42 @@ enum AgentAttachmentLoader {
         return (added, firstError)
     }
 
+    static func canLoadFromPasteboard(_ pasteboard: NSPasteboard) -> Bool {
+        if pasteboard.canReadObject(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        ) {
+            return true
+        }
+        if !directImageCandidates(on: pasteboard).isEmpty {
+            return true
+        }
+        if !hasNonWhitespacePlainText(on: pasteboard) {
+            if pasteboard.availableType(from: [.tiff]) != nil {
+                return true
+            }
+            if NSImage.canInit(with: pasteboard) {
+                return true
+            }
+        }
+        return false
+    }
+
     static func loadFromPasteboard(
         _ pasteboard: NSPasteboard,
         existing: [AgentAttachment]
     ) -> PasteResult {
-        let fileURLs = (pasteboard.readObjects(
+        let rawFileURLs = (pasteboard.readObjects(
             forClasses: [NSURL.self],
             options: [.urlReadingFileURLsOnly: true]
         ) as? [URL]) ?? []
+        let fileURLs = rawFileURLs.map { ($0 as NSURL).filePathURL ?? $0 }
         if !fileURLs.isEmpty {
             let result = load(urls: fileURLs, existing: existing, mode: .any)
             return .handled(attachments: result.attachments, error: result.error)
         }
 
-        for candidate in directPasteboardImageTypes {
+        for candidate in directImageCandidates(on: pasteboard) {
             if let data = pasteboard.data(forType: candidate.type), !data.isEmpty {
                 let name = nextPastedImageName(ext: candidate.ext, existing: existing)
                 let result = loadImageData(
@@ -191,25 +213,54 @@ enum AgentAttachmentLoader {
             }
         }
 
-        let plainText = pasteboard.string(forType: .string)
-        if plainText?.isEmpty ?? true,
-           let tiffData = pasteboard.data(forType: .tiff), !tiffData.isEmpty
-        {
-            let name = nextPastedImageName(ext: "png", existing: existing)
-            let result = loadImageData(
-                tiffData,
-                suggestedName: name,
-                preferredMIMEType: "image/tiff",
-                path: nil,
-                existing: existing
-            )
-            return .handled(
-                attachments: result.attachment.map { [$0] } ?? [],
-                error: result.error
-            )
+        if !hasNonWhitespacePlainText(on: pasteboard) {
+            if let tiffData = pasteboard.data(forType: .tiff), !tiffData.isEmpty {
+                let name = nextPastedImageName(ext: "png", existing: existing)
+                let result = loadImageData(
+                    tiffData,
+                    suggestedName: name,
+                    preferredMIMEType: "image/tiff",
+                    path: nil,
+                    existing: existing
+                )
+                return .handled(
+                    attachments: result.attachment.map { [$0] } ?? [],
+                    error: result.error
+                )
+            }
+            if let image = NSImage(pasteboard: pasteboard) {
+                let name = nextPastedImageName(ext: "png", existing: existing)
+                let result = loadImage(image, suggestedName: name, existing: existing)
+                return .handled(
+                    attachments: result.attachment.map { [$0] } ?? [],
+                    error: result.error
+                )
+            }
         }
 
         return .notHandled
+    }
+
+    private static func directImageCandidates(on pasteboard: NSPasteboard) -> [PasteboardImageCandidate] {
+        var candidates: [PasteboardImageCandidate] = []
+        var seen: Set<NSPasteboard.PasteboardType> = []
+        for candidate in directPasteboardImageTypes where pasteboard.availableType(from: [candidate.type]) != nil {
+            candidates.append(candidate)
+            seen.insert(candidate.type)
+        }
+        for type in pasteboard.types ?? [] where type != .tiff && !seen.contains(type) {
+            guard let utType = UTType(type.rawValue), utType.conforms(to: .image) else { continue }
+            let ext = utType.preferredFilenameExtension ?? "png"
+            let mime = utType.preferredMIMEType ?? "image/png"
+            candidates.append(PasteboardImageCandidate(type: type, mime: mime, ext: ext))
+            seen.insert(type)
+        }
+        return candidates
+    }
+
+    private static func hasNonWhitespacePlainText(on pasteboard: NSPasteboard) -> Bool {
+        guard let plainText = pasteboard.string(forType: .string) else { return false }
+        return !plainText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     static func loadImageData(

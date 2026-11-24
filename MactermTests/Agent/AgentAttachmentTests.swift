@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 @testable import Macterm
 import Testing
+import UniformTypeIdentifiers
 
 @MainActor
 struct AgentAttachmentTests {
@@ -196,6 +197,7 @@ struct AgentAttachmentTests {
         try Data("hello file".utf8).write(to: fileURL)
         pasteboard.clearContents()
         pasteboard.writeObjects([fileURL as NSURL])
+        #expect(AgentAttachmentLoader.canLoadFromPasteboard(pasteboard))
         switch AgentAttachmentLoader.loadFromPasteboard(pasteboard, existing: []) {
         case .notHandled:
             Issue.record("Expected Finder file URL paste to be handled")
@@ -206,5 +208,60 @@ struct AgentAttachmentTests {
             #expect(attachments[0].name == "snippet.txt")
             #expect(attachments[0].text == "hello file")
         }
+
+        // 6. NSImage written directly (e.g. Copy Image button) attaches as an image.
+        let copiedImage = try #require(NSImage(data: png))
+        pasteboard.clearContents()
+        pasteboard.writeObjects([copiedImage])
+        #expect(AgentAttachmentLoader.canLoadFromPasteboard(pasteboard))
+        switch AgentAttachmentLoader.loadFromPasteboard(pasteboard, existing: []) {
+        case .notHandled:
+            Issue.record("Expected NSImage paste to be handled")
+        case let .handled(attachments, error):
+            #expect(error == nil)
+            #expect(attachments.count == 1)
+            #expect(attachments[0].kind == .image)
+        }
+
+        // 7. Whitespace-only plain text alongside TIFF still attaches the image.
+        pasteboard.clearContents()
+        pasteboard.setString("  \n ", forType: .string)
+        pasteboard.setData(tiff, forType: .tiff)
+        #expect(AgentAttachmentLoader.canLoadFromPasteboard(pasteboard))
+        switch AgentAttachmentLoader.loadFromPasteboard(pasteboard, existing: []) {
+        case .notHandled:
+            Issue.record("Expected TIFF with whitespace-only text to be handled")
+        case let .handled(attachments, error):
+            #expect(error == nil)
+            #expect(attachments.count == 1)
+            #expect(attachments[0].kind == .image)
+        }
+
+        // 8. Other UTType.image formats (e.g. BMP) attach and normalize to a supported image MIME.
+        let bmpRep = try #require(NSBitmapImageRep(data: png))
+        let bmpData = try #require(bmpRep.representation(using: .bmp, properties: [:]))
+        let bmpType = NSPasteboard.PasteboardType(UTType.bmp.identifier)
+        pasteboard.clearContents()
+        pasteboard.setData(bmpData, forType: bmpType)
+        #expect(AgentAttachmentLoader.canLoadFromPasteboard(pasteboard))
+        switch AgentAttachmentLoader.loadFromPasteboard(pasteboard, existing: []) {
+        case .notHandled:
+            Issue.record("Expected BMP image paste to be handled")
+        case let .handled(attachments, error):
+            #expect(error == nil)
+            #expect(attachments.count == 1)
+            #expect(attachments[0].kind == .image)
+            #expect(attachments[0].mimeType == "image/png" || attachments[0].mimeType == "image/jpeg")
+        }
+
+        // 9. Plain text and TIFF+text do not report as pasteable attachments.
+        pasteboard.clearContents()
+        pasteboard.setString("plain only", forType: .string)
+        #expect(!AgentAttachmentLoader.canLoadFromPasteboard(pasteboard))
+
+        pasteboard.clearContents()
+        pasteboard.setString("cell value", forType: .string)
+        pasteboard.setData(tiff, forType: .tiff)
+        #expect(!AgentAttachmentLoader.canLoadFromPasteboard(pasteboard))
     }
 }
