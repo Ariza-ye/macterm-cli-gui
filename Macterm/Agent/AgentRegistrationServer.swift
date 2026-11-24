@@ -436,6 +436,28 @@ final class AgentRuntime {
     func start() {
         server.start()
         AgentInterceptStore.shared.syncShellScripts()
+        Self.syncInstalledPiExtension()
+    }
+
+    /// Keeps an already-installed `~/.pi/agent/extensions/macterm-pi-bridge.ts` in sync with the
+    /// bundled version so protocol updates apply without manual recopying.
+    private static func syncInstalledPiExtension() {
+        guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil,
+              let bundledURL = Bundle.main.resourceURL?
+              .appendingPathComponent("integrations/macterm-pi-bridge.ts"),
+              let bundledData = try? Data(contentsOf: bundledURL)
+        else { return }
+        let installedURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".pi/agent/extensions/macterm-pi-bridge.ts")
+        guard FileManager.default.fileExists(atPath: installedURL.path),
+              (try? Data(contentsOf: installedURL)) != bundledData
+        else { return }
+        do {
+            try bundledData.write(to: installedURL, options: .atomic)
+            logger.info("synced installed Pi bridge extension at \(installedURL.path, privacy: .public)")
+        } catch {
+            logger.error("failed to sync Pi bridge extension: \(EnglishErrorText.describe(error), privacy: .public)")
+        }
     }
 
     func attach(appState: AppState) {

@@ -4,7 +4,13 @@ import { mkdtempSync, rmdirSync, statSync, unlinkSync } from "node:fs";
 import { createConnection, createServer } from "node:net";
 import { basename, dirname } from "node:path";
 import { createInterface } from "node:readline";
+import { pathToFileURL } from "node:url";
 import { stripVTControlCharacters } from "node:util";
+
+const MAX_ATTACHMENTS = 10;
+const MAX_TEXT_ATTACHMENT_BYTES = 128 * 1024;
+const MAX_IMAGE_ATTACHMENT_BYTES = 5 * 1024 * 1024;
+const MAX_TOTAL_ATTACHMENT_BYTES = 12 * 1024 * 1024;
 
 export const PRESETS = {
     agy: {
@@ -27,6 +33,137 @@ export const PRESETS = {
 
 export function clean(text) {
     return stripVTControlCharacters(String(text ?? "")).replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "");
+}
+
+function decodedBase64Bytes(base64) {
+    const compact = String(base64 ?? "").replace(/\s+/g, "");
+    if (!compact) return 0;
+    const padding = compact.endsWith("==") ? 2 : compact.endsWith("=") ? 1 : 0;
+    return Math.max(0, Math.floor((compact.length * 3) / 4) - padding);
+}
+
+function attachmentNameFromUri(uri, fallback) {
+    if (typeof uri === "string" && uri.trim()) {
+        try {
+            const parsed = new URL(uri);
+            const candidate = decodeURIComponent(basename(parsed.pathname || ""));
+            if (candidate) return clean(candidate).slice(0, 128);
+        } catch {
+            const candidate = basename(uri);
+            if (candidate) return clean(candidate).slice(0, 128);
+        }
+    }
+    return fallback;
+}
+
+export function formatTextAttachment(attachment) {
+    const name = clean(attachment.name || "attachment.txt").replace(/[\r\n]/g, " ");
+    return `--- Attached file: ${name} ---\n${attachment.text ?? ""}\n--- End of ${name} ---`;
+}
+
+export function normalizeAttachments(rawAttachments) {
+    if (rawAttachments === undefined || rawAttachments === null) {
+        return { valid: true, attachments: [] };
+    }
+    if (!Array.isArray(rawAttachments) || rawAttachments.length > MAX_ATTACHMENTS) {
+        return { valid: false, attachments: [] };
+    }
+    const attachments = [];
+    let totalBytes = 0;
+    for (const item of rawAttachments) {
+        if (!item || typeof item !== "object") return { valid: false, attachments: [] };
+        const kind = item.kind;
+        const id = typeof item.id === "string" && item.id.trim() ? item.id.slice(0, 128) : randomUUID();
+        const name = clean(item.name || (kind === "image" ? "image.png" : "attachment.txt")).trim().slice(0, 128)
+            || (kind === "image" ? "image.png" : "attachment.txt");
+        const path = typeof item.path === "string" && item.path.trim() ? item.path.slice(0, 1024) : undefined;
+
+        if (kind === "image") {
+            const mimeType = typeof item.mimeType === "string" ? item.mimeType.trim().toLowerCase() : "";
+            const data = typeof item.data === "string" ? item.data.trim() : "";
+            if (!mimeType.startsWith("image/") || !data) return { valid: false, attachments: [] };
+            const byteCount = decodedBase64Bytes(data);
+            if (byteCount <= 0 || byteCount > MAX_IMAGE_ATTACHMENT_BYTES) return { valid: false, attachments: [] };
+            totalBytes += byteCount;
+            if (totalBytes > MAX_TOTAL_ATTACHMENT_BYTES) return { valid: false, attachments: [] };
+            attachments.push({
+                id,
+                kind: "image",
+                name,
+                mimeType,
+                data,
+                byteCount,
+                ...(path ? { path } : {}),
+            });
+        } else if (kind === "text") {
+            if (typeof item.text !== "string") return { valid: false, attachments: [] };
+            const text = item.text;
+            const byteCount = Buffer.byteLength(text, "utf8");
+            if (byteCount > MAX_TEXT_ATTACHMENT_BYTES) return { valid: false, attachments: [] };
+            totalBytes += byteCount;
+            if (totalBytes > MAX_TOTAL_ATTACHMENT_BYTES) return { valid: false, attachments: [] };
+            const mimeType = typeof item.mimeType === "string" && item.mimeType.trim()
+                ? item.mimeType.trim().slice(0, 128)
+                : "text/plain";
+            attachments.push({
+                id,
+                kind: "text",
+                name,
+                mimeType,
+                text,
+                byteCount,
+                ...(path ? { path } : {}),
+            });
+        } else {
+            return { valid: false, attachments: [] };
+        }
+    }
+    return { valid: true, attachments };
+}
+
+export function buildAcpPromptBlocks(text, attachments, promptCapabilities = {}) {
+    const blocks = [];
+    if (typeof text === "string" && text.length > 0) {
+        blocks.push({ type: "text", text });
+    }
+    for (const attachment of attachments) {
+        if (attachment.kind === "image") {
+            const block = {
+                type: "image",
+                mimeType: attachment.mimeType,
+                data: attachment.data,
+            };
+            if (attachment.path) {
+                try {
+                    block.uri = pathToFileURL(attachment.path).href;
+                } catch {}
+            }
+            blocks.push(block);
+        } else if (attachment.kind === "text") {
+            if (promptCapabilities?.embeddedContext === true) {
+                let uri = `file:///${encodeURIComponent(attachment.name)}`;
+                if (attachment.path) {
+                    try {
+                        uri = pathToFileURL(attachment.path).href;
+                    } catch {}
+                }
+                blocks.push({
+                    type: "resource",
+                    resource: {
+                        uri,
+                        mimeType: attachment.mimeType || "text/plain",
+                        text: attachment.text ?? "",
+                    },
+                });
+            } else {
+                blocks.push({
+                    type: "text",
+                    text: formatTextAttachment(attachment),
+                });
+            }
+        }
+    }
+    return blocks;
 }
 
 function inferConfigCategory(id, category) {
@@ -336,6 +473,7 @@ export async function runAcpBridge(config, runtime = {}) {
     let configOptions = [];
     let usesLegacyModels = false;
     let booleanConfigIds = new Set();
+    let promptCapabilities = {};
     let configPending = false;
     let newConversationPending = false;
 
@@ -403,12 +541,49 @@ export async function runAcpBridge(config, runtime = {}) {
         if (type === "user_message_chunk" && turn) return;
         if (type === "agent_message_chunk" || type === "user_message_chunk") {
             const kind = type === "agent_message_chunk" ? "assistant" : "user";
-            if (content?.type !== "text") return;
-            if (message?.kind !== kind) message = { id: randomUUID(), kind, text: "" };
-            const text = clean(content.text);
-            if (kind === "assistant") writeOut(text);
-            message = { ...message, text: (message.text + text).slice(0, 64 * 1024) };
-            upsert(message);
+            if (content?.type === "text") {
+                if (message?.kind !== kind) message = { id: randomUUID(), kind, text: "" };
+                const text = clean(content.text);
+                if (kind === "assistant") writeOut(text);
+                message = { ...message, text: (message.text + text).slice(0, 64 * 1024) };
+                upsert(message);
+            } else if (content?.type === "image" && typeof content.data === "string" && typeof content.mimeType === "string") {
+                const byteCount = decodedBase64Bytes(content.data);
+                if (byteCount <= 0 || byteCount > MAX_IMAGE_ATTACHMENT_BYTES) return;
+                if (message?.kind !== kind) message = { id: randomUUID(), kind, text: "" };
+                const ext = content.mimeType.split("/")[1]?.split(";")[0] || "png";
+                const attachment = {
+                    id: randomUUID(),
+                    kind: "image",
+                    name: attachmentNameFromUri(content.uri, `image.${ext}`),
+                    mimeType: content.mimeType,
+                    data: content.data,
+                    byteCount,
+                };
+                const existing = Array.isArray(message.attachments) ? message.attachments : [];
+                if (existing.length < MAX_ATTACHMENTS) {
+                    message = { ...message, attachments: [...existing, attachment] };
+                    upsert(message);
+                }
+            } else if (content?.type === "resource" && typeof content.resource?.text === "string") {
+                const text = clean(content.resource.text);
+                const byteCount = Buffer.byteLength(text, "utf8");
+                if (byteCount > MAX_TEXT_ATTACHMENT_BYTES) return;
+                if (message?.kind !== kind) message = { id: randomUUID(), kind, text: "" };
+                const attachment = {
+                    id: randomUUID(),
+                    kind: "text",
+                    name: attachmentNameFromUri(content.resource.uri, "attachment.txt"),
+                    mimeType: typeof content.resource.mimeType === "string" ? content.resource.mimeType : "text/plain",
+                    text,
+                    byteCount,
+                };
+                const existing = Array.isArray(message.attachments) ? message.attachments : [];
+                if (existing.length < MAX_ATTACHMENTS) {
+                    message = { ...message, attachments: [...existing, attachment] };
+                    upsert(message);
+                }
+            }
         } else if (type === "tool_call" || type === "tool_call_update") {
             message = undefined;
             const id = `tool:${update.toolCallId}`;
@@ -535,20 +710,29 @@ export async function runAcpBridge(config, runtime = {}) {
         }
     });
 
-    async function prompt(text, owner, id) {
+    async function prompt(text, attachments, owner, id) {
+        const normalizedText = typeof text === "string" ? text : "";
+        const normalized = normalizeAttachments(attachments);
+        const hasContent = Boolean(normalizedText.trim()) || normalized.attachments.length > 0;
         if (!sessionID || turn || permissions.size || configPending || newConversationPending
-            || typeof text !== "string" || !text.trim()
-            || Buffer.byteLength(text) > 128 * 1024) {
+            || !normalized.valid || !hasContent
+            || Buffer.byteLength(normalizedText) > 128 * 1024) {
             if (owner === peer && owner) emit({ type: "reply", id, accepted: false, ...state() });
             return;
         }
-        turn = { id, owner, text };
+        const promptBlocks = buildAcpPromptBlocks(normalizedText, normalized.attachments, promptCapabilities);
+        turn = { id, owner, text: normalizedText };
         message = undefined;
-        upsert({ id: randomUUID(), kind: "user", text: clean(text) });
+        upsert({
+            id: randomUUID(),
+            kind: "user",
+            text: clean(normalizedText),
+            ...(normalized.attachments.length ? { attachments: normalized.attachments } : {}),
+        });
         if (owner && owner === peer) emit({ type: "reply", id, accepted: true, ...state() });
         else status();
         try {
-            await request("session/prompt", { sessionId: sessionID, prompt: [{ type: "text", text }] });
+            await request("session/prompt", { sessionId: sessionID, prompt: promptBlocks });
         } catch (error) {
             upsert({ id: randomUUID(), kind: "assistant", text: clean(error.message) });
             writeErr(`\n${clean(error.message)}\n`);
@@ -671,7 +855,7 @@ export async function runAcpBridge(config, runtime = {}) {
             else void newConversation();
         } else if (line.trim()) {
             if (turn || configPending || newConversationPending) writeOut("Wait for the current turn to end.\n");
-            else void prompt(line);
+            else void prompt(line, []);
         } else if (!turn) {
             terminal.prompt();
         }
@@ -706,7 +890,7 @@ export async function runAcpBridge(config, runtime = {}) {
                 for (const row of rows.values()) emit({ type: "row", row });
                 emit({ type: "snapshotEnd", ...state(), configOptions });
             } else if (command?.type === "send" && typeof command.id === "string") {
-                void prompt(command.text, socket, command.id);
+                void prompt(command.text ?? "", command.attachments, socket, command.id);
             } else if (command?.type === "setConfig" && typeof command.id === "string") {
                 void setConfig(command.configId, command.value, socket, command.id);
             } else if (command?.type === "newConversation" && typeof command.id === "string") {
@@ -808,6 +992,7 @@ export async function runAcpBridge(config, runtime = {}) {
             clientInfo: { name: config.clientName, version: env.TERM_PROGRAM_VERSION || "unknown" },
         });
         if (initialized?.protocolVersion !== 1) throw new Error("Macterm requires ACP version 1.");
+        promptCapabilities = initialized?.agentCapabilities?.promptCapabilities ?? {};
         const params = { cwd, mcpServers: [] };
         let sessionResult;
         if (config.conversation) {

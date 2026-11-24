@@ -15,6 +15,7 @@ cp "$SRCROOT/scripts/integrations/acp-bridge.mjs" "$INTEGRATIONS_DIR/"
 cp "$SRCROOT/scripts/integrations/macterm-acp" "$INTEGRATIONS_DIR/"
 cp "$SRCROOT/scripts/integrations/macterm-agy" "$INTEGRATIONS_DIR/"
 cp "$SRCROOT/scripts/integrations/macterm-opencode" "$INTEGRATIONS_DIR/"
+cp "$SRCROOT/scripts/integrations/macterm-pi-bridge.ts" "$INTEGRATIONS_DIR/"
 chmod +x "$INTEGRATIONS_DIR/macterm-acp" "$INTEGRATIONS_DIR/macterm-agy" "$INTEGRATIONS_DIR/macterm-opencode"
 
 cp "$SRCROOT/scripts/shell-integration/macterm-intercept.zsh" "$SHELL_DIR/"

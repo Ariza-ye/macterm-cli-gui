@@ -1,14 +1,18 @@
+import AppKit
 import SwiftUI
 
-/// Settings → Agents: controls automatic terminal command interception for the
-/// native Agent GUI and manages built-in and custom interception rules.
+/// Settings → Agents: controls Agent GUI appearance, automatic terminal command
+/// interception, and built-in/custom interception rules.
 struct AgentsSettings: View {
     private var store: AgentInterceptStore { .shared }
+    private var appearanceSettings: AgentAppearanceSettings { .shared }
 
+    @State private var fontCatalog: AgentFontCatalog = .empty
     @State private var editor: AgentInterceptEditorRequest?
     @State private var pendingRemoval: AgentInterceptRule?
 
     var body: some View {
+        let appearance = appearanceSettings.appearance
         Form {
             Section {
                 SettingsInfoBlock(symbol: "bubble.left.and.text.bubble.right") {
@@ -18,6 +22,77 @@ struct AgentsSettings: View {
                     Non-interactive runs and other arguments pass through to the original command.
                     """))
                     .settingsSecondaryText()
+                }
+            }
+
+            Section {
+                Picker("Font", selection: fontFamilyBinding) {
+                    Text("System Default").tag("")
+                    let families = fontCatalog.bodyFamilies(including: appearance.fontFamily)
+                    if !families.isEmpty {
+                        Divider()
+                        ForEach(families, id: \.self) { family in
+                            Text(verbatim: family).tag(family)
+                        }
+                    }
+                }
+
+                Picker("Code font", selection: codeFontFamilyBinding) {
+                    Text("System Monospaced").tag("")
+                    let sections = fontCatalog.codeFamilySections(including: appearance.codeFontFamily)
+                    if !sections.monospaced.isEmpty {
+                        Divider()
+                        ForEach(sections.monospaced, id: \.self) { family in
+                            Text(verbatim: family).tag(family)
+                        }
+                    }
+                    if !sections.other.isEmpty {
+                        Divider()
+                        ForEach(sections.other, id: \.self) { family in
+                            Text(verbatim: family).tag(family)
+                        }
+                    }
+                }
+
+                AgentSettingsSlider(
+                    label: "Text size",
+                    value: fontSizeBinding,
+                    range: AgentAppearance.fontSizeRange,
+                    step: 1,
+                    display: { "\(Int($0.rounded())) pt" }
+                )
+
+                AgentSettingsSlider(
+                    label: "Line spacing",
+                    value: lineSpacingBinding,
+                    range: AgentAppearance.lineSpacingRange,
+                    step: 1,
+                    display: { "\(Int($0.rounded())) pt" }
+                )
+
+                Picker("Content width", selection: contentWidthBinding) {
+                    ForEach(AgentContentWidth.allCases) { width in
+                        Text(width.displayName).tag(width)
+                    }
+                }
+
+                AgentAppearancePreview(appearance: appearance)
+
+                Text("Changes apply immediately to open Agent GUI panes.")
+                    .settingsSecondaryText()
+            } header: {
+                HStack {
+                    Text(String(
+                        localized: "agents.appearance.section",
+                        defaultValue: "Appearance",
+                        comment: "Settings → Agents section header"
+                    ))
+                    Spacer()
+                    Button("Reset to Defaults") {
+                        appearanceSettings.resetToDefaults()
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(appearanceSettings.isDefault)
                 }
             }
 
@@ -65,6 +140,9 @@ struct AgentsSettings: View {
             }
         }
         .formStyle(.grouped)
+        .task {
+            fontCatalog = await AgentFontCatalog.loadCached()
+        }
         .sheet(item: $editor) { request in
             AgentInterceptRuleEditorSheet(request: request, store: store)
         }
@@ -92,6 +170,122 @@ struct AgentsSettings: View {
             get: { store.enabled },
             set: { store.setEnabled($0) }
         )
+    }
+
+    private var fontFamilyBinding: Binding<String> {
+        Binding(
+            get: { appearanceSettings.fontFamily },
+            set: { appearanceSettings.fontFamily = $0 }
+        )
+    }
+
+    private var codeFontFamilyBinding: Binding<String> {
+        Binding(
+            get: { appearanceSettings.codeFontFamily },
+            set: { appearanceSettings.codeFontFamily = $0 }
+        )
+    }
+
+    private var fontSizeBinding: Binding<Double> {
+        Binding(
+            get: { appearanceSettings.fontSize },
+            set: { appearanceSettings.fontSize = $0 }
+        )
+    }
+
+    private var lineSpacingBinding: Binding<Double> {
+        Binding(
+            get: { appearanceSettings.lineSpacing },
+            set: { appearanceSettings.lineSpacing = $0 }
+        )
+    }
+
+    private var contentWidthBinding: Binding<AgentContentWidth> {
+        Binding(
+            get: { appearanceSettings.contentWidth },
+            set: { appearanceSettings.contentWidth = $0 }
+        )
+    }
+}
+
+private struct AgentSettingsSlider: View {
+    private static let labelWidth: CGFloat = 126
+    private static let valueWidth: CGFloat = 52
+
+    let label: LocalizedStringKey
+    @Binding var value: Double
+    let range: ClosedRange<Double>
+    let step: Double
+    let display: (Double) -> String
+
+    var body: some View {
+        HStack {
+            Text(label)
+                .frame(width: Self.labelWidth, alignment: .leading)
+                .dimsWhenDisabled()
+            Slider(value: $value, in: range, step: step) { editing in
+                guard !editing else { return }
+                DispatchQueue.main.async {
+                    guard let window = NSApp.keyWindow else { return }
+                    let movable = window.isMovable
+                    window.isMovable = !movable
+                    window.isMovable = movable
+                }
+            }
+            Text(verbatim: display(value))
+                .monospacedDigit()
+                .frame(width: Self.valueWidth, alignment: .trailing)
+                .dimsWhenDisabled()
+        }
+    }
+}
+
+private struct AgentAppearancePreview: View {
+    let appearance: AgentAppearance
+
+    private var sampleMarkdown: String {
+        String(
+            localized: "agents.appearance.previewMarkdown",
+            defaultValue: """
+            Use **bold** emphasis and inline `code` together.
+
+            ```swift
+            let greeting = "Hello, Macterm"
+            print(greeting)
+            ```
+            """,
+            comment: "Live preview markdown sample in Settings → Agents"
+        )
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Spacer(minLength: 32)
+                Text(String(
+                    localized: "agents.appearance.previewQuestion",
+                    defaultValue: "How does the Agent GUI look?",
+                    comment: "Live preview user message in Settings → Agents"
+                ))
+                .font(appearance.bodyFont())
+                .lineSpacing(appearance.lineSpacingPoints)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(MactermTheme.accentSoft, in: RoundedRectangle(cornerRadius: 8))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8).strokeBorder(MactermTheme.border).allowsHitTesting(false)
+                }
+            }
+            AgentMarkdownView(source: sampleMarkdown, appearance: appearance)
+        }
+        .padding(12)
+        .foregroundStyle(MactermTheme.fg)
+        .tint(MactermTheme.accent)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: MactermTheme.nsConfiguredBg.withAlphaComponent(1)), in: RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8).strokeBorder(MactermTheme.border).allowsHitTesting(false)
+        }
     }
 }
 

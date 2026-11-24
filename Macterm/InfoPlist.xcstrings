@@ -1,6 +1,39 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "CFBundleDisplayName" : {
+      "comment" : "Bundle display name",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Macterm"
+          }
+        }
+      }
+    },
+    "CFBundleName" : {
+      "comment" : "Bundle name",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Macterm"
+          }
+        }
+      }
+    },
+    "Macterm Pane Identifier" : {
+
+    },
+    "Macterm Project Move" : {
+
+    },
+    "Macterm Tab Move" : {
+
+    },
     "NSAppleEventsUsageDescription" : {
       "comment" : "Privacy prompt that macOS shows when a program in a pane asks for this permission",
       "extractionState" : "manual",

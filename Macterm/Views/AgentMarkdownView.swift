@@ -3,6 +3,7 @@ import SwiftUI
 
 struct AgentMarkdownView: View {
     let source: String
+    var appearance: AgentAppearance = .default
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -73,9 +74,6 @@ struct AgentMarkdownView: View {
             let id = components.first?.identity ?? 0
             var text = AttributedString(content[run.range])
             text.presentationIntent = nil
-            if run.inlinePresentationIntent?.contains(.code) == true {
-                text.font = .system(.body, design: .monospaced)
-            }
             if blocks.last?.id == id {
                 blocks[blocks.count - 1].text.append(text)
             } else {
@@ -89,9 +87,12 @@ struct AgentMarkdownView: View {
     private func blockView(_ block: Block) -> some View {
         switch block.components.first?.kind {
         case let .header(level):
-            prose(block.text)
-                .font(level <= 2 ? .title3.weight(.semibold) : .headline)
-                .accessibilityAddTraits(.isHeader)
+            prose(
+                block.text,
+                size: level <= 2 ? appearance.headingSize : appearance.subheadingSize,
+                weight: .semibold
+            )
+            .accessibilityAddTraits(.isHeader)
         case let .codeBlock(languageHint):
             code(String(block.text.characters), language: languageHint)
         case .thematicBreak:
@@ -118,6 +119,7 @@ struct AgentMarkdownView: View {
         return HStack(alignment: .firstTextBaseline, spacing: 8) {
             if let number = listItems.first {
                 Text(verbatim: isOrdered ? "\(number)." : "•")
+                    .font(appearance.bodyFont())
                     .monospacedDigit()
                     .foregroundStyle(MactermTheme.fgMuted)
             }
@@ -132,11 +134,35 @@ struct AgentMarkdownView: View {
         }
     }
 
-    private func prose(_ text: AttributedString) -> some View {
-        Text(text)
-            .lineSpacing(3)
+    private func prose(
+        _ text: AttributedString,
+        size: CGFloat? = nil,
+        weight: NSFont.Weight = .regular
+    ) -> some View {
+        Text(styledText(text, size: size ?? appearance.bodySize, weight: weight))
+            .lineSpacing(appearance.lineSpacingPoints)
             .textSelection(.enabled)
             .fixedSize(horizontal: false, vertical: true)
+    }
+
+    private func styledText(
+        _ text: AttributedString,
+        size: CGFloat,
+        weight: NSFont.Weight
+    ) -> AttributedString {
+        var result = text
+        for run in result.runs {
+            let inline = run.inlinePresentationIntent
+            if inline?.contains(.code) == true {
+                result[run.range].font = appearance.codeFont(size: size, weight: weight)
+            } else {
+                let isBold = inline?.contains(.stronglyEmphasized) == true
+                let isItalic = inline?.contains(.emphasized) == true
+                let runWeight: NSFont.Weight = isBold ? .bold : weight
+                result[run.range].font = appearance.bodyFont(size: size, weight: runWeight, italic: isItalic)
+            }
+        }
+        return result
     }
 
     private func table(_ cells: [Block]) -> some View {
@@ -148,8 +174,7 @@ struct AgentMarkdownView: View {
                         let isHeader = row.first?.components.dropFirst().first?.kind == .tableHeaderRow
                         GridRow {
                             ForEach(row) { cell in
-                                prose(cell.text)
-                                    .fontWeight(isHeader ? .semibold : .regular)
+                                prose(cell.text, weight: isHeader ? .semibold : .regular)
                                     .fixedSize()
                             }
                         }
@@ -184,14 +209,15 @@ struct AgentMarkdownView: View {
                 .buttonStyle(.borderless)
                 .help(Text("Copy Code"))
             }
-            .font(.caption)
+            .font(appearance.captionFont())
             .foregroundStyle(MactermTheme.fgMuted)
             .padding(.horizontal, 12)
             .padding(.vertical, 6)
             Rectangle().fill(MactermTheme.border).frame(height: 1).accessibilityHidden(true)
             ScrollView(.horizontal) {
                 Text(verbatim: text.hasSuffix("\n") ? String(text.dropLast()) : text)
-                    .font(.system(.callout, design: .monospaced))
+                    .font(appearance.codeFont())
+                    .lineSpacing(max(1, appearance.lineSpacingPoints * 0.75))
                     .textSelection(.enabled)
                     .fixedSize(horizontal: true, vertical: true)
                     .padding(12)

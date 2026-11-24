@@ -66,6 +66,11 @@ final class AgentBridge {
         let text: String
         var name: String?
         var status: ToolStatus?
+        var attachments: [AgentAttachment]?
+
+        var resolvedAttachments: [AgentAttachment] {
+            attachments ?? []
+        }
     }
 
     enum ToolStatus: String, Decodable {
@@ -181,6 +186,7 @@ final class AgentBridge {
         var token: UUID?
         var id: UUID?
         var text: String?
+        var attachments: [AgentAttachment]?
         var configId: String?
         var value: String?
         var permissionId: String?
@@ -203,6 +209,16 @@ final class AgentBridge {
     private(set) var pendingPermissionID: String?
     private(set) var permissionRejected = false
     var draft = ""
+    var draftAttachments: [AgentAttachment] = []
+    private(set) var attachmentError: AgentAttachmentError?
+
+    var hasDraftContent: Bool {
+        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !draftAttachments.isEmpty
+    }
+
+    var isDraftTooLong: Bool {
+        draft.utf8.count > 128 * 1024
+    }
 
     /// Transcript rows including an optimistic user bubble while waiting for the bridge to echo it.
     var displayRows: [Row] {
@@ -232,6 +248,7 @@ final class AgentBridge {
     private var snapshot: [Row]?
     private var isClosed = false
     private var pendingSendText: String?
+    private var pendingSendAttachments: [AgentAttachment] = []
     private var optimisticUserRow: Row?
     private var requestTimeout: Task<Void, Never>?
     private var pendingConfigRequest: (id: UUID, configID: String)?
@@ -240,7 +257,7 @@ final class AgentBridge {
     private var pendingPermissionRequest: (id: UUID, permissionID: String)?
     private var permissionTimeout: Task<Void, Never>?
     private var onClose: (() -> Void)?
-    private static let maxFrameBytes = 1 << 20
+    private static let maxFrameBytes = 24 * 1024 * 1024
 
     init(
         provider: Provider,
@@ -303,7 +320,9 @@ final class AgentBridge {
         isReady = false
         pendingSend = nil
         pendingSendText = nil
+        pendingSendAttachments = []
         optimisticUserRow = nil
+        attachmentError = nil
         pendingConfigRequest = nil
         pendingConfigID = nil
         pendingNewConversation = nil
@@ -320,22 +339,52 @@ final class AgentBridge {
         onClose = nil
     }
 
+    func appendDraftAttachments(_ attachments: [AgentAttachment], error: AgentAttachmentError?) {
+        if !attachments.isEmpty {
+            draftAttachments.append(contentsOf: attachments)
+            sendRejected = false
+        }
+        attachmentError = error
+    }
+
+    func removeDraftAttachment(id: String) {
+        draftAttachments.removeAll { $0.id == id }
+        attachmentError = nil
+    }
+
+    func clearAttachmentError() {
+        attachmentError = nil
+    }
+
     func submit(from surface: PaneSurface) {
         guard canSend(from: surface), !isBusy, !isWaiting,
               pendingSend == nil, pendingConfigRequest == nil, pendingNewConversation == nil,
-              !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-              draft.utf8.count <= 128 * 1024
+              hasDraftContent, !isDraftTooLong
         else { return }
         let id = UUID()
         let submitted = draft
+        let submittedAttachments = draftAttachments
         draft = ""
+        draftAttachments = []
+        attachmentError = nil
         sendRejected = false
         configRejected = false
         newConversationRejected = false
         pendingSend = id
         pendingSendText = submitted
-        optimisticUserRow = Row(id: "pending:\(id.uuidString)", kind: .user, text: submitted)
-        send(Command(type: "send", id: id, text: submitted))
+        pendingSendAttachments = submittedAttachments
+        optimisticUserRow = Row(
+            id: "pending:\(id.uuidString)",
+            kind: .user,
+            text: submitted,
+            attachments: submittedAttachments.isEmpty ? nil : submittedAttachments
+        )
+        send(Command(
+            type: "send",
+            id: id,
+            text: submitted,
+            attachments: submittedAttachments.isEmpty ? nil : submittedAttachments
+        ))
         requestTimeout?.cancel()
         requestTimeout = Task { [weak self] in
             try? await Task.sleep(for: .seconds(30))
@@ -524,6 +573,7 @@ final class AgentBridge {
             if event.accepted == true {
                 pendingSend = nil
                 pendingSendText = nil
+                pendingSendAttachments = []
                 sendRejected = false
             } else {
                 failPendingSend()
@@ -579,12 +629,18 @@ final class AgentBridge {
 
     private func failPendingSend() {
         let failedText = pendingSendText
+        let failedAttachments = pendingSendAttachments
         pendingSend = nil
         pendingSendText = nil
+        pendingSendAttachments = []
         optimisticUserRow = nil
+        attachmentError = nil
         sendRejected = true
         if draft.isEmpty, let failedText {
             draft = failedText
+        }
+        if draftAttachments.isEmpty, !failedAttachments.isEmpty {
+            draftAttachments = failedAttachments
         }
     }
 

@@ -1,19 +1,23 @@
 import AppKit
 import Carbon.HIToolbox
 import SwiftUI
-
-private let agentColumnWidth: CGFloat = 680
+import UniformTypeIdentifiers
 
 struct AgentPaneView: View {
     @Bindable var bridge: AgentBridge
     let surface: PaneSurface
     let focus: AgentPaneFocus
     let showTerminal: () -> Void
+    @State private var previewContext: AgentAttachmentPreviewContext?
+    @State private var isDropTargeted = false
+
+    private var appearanceSettings: AgentAppearanceSettings { .shared }
 
     var body: some View {
+        let appearance = appearanceSettings.appearance
         GeometryReader { pane in
             VStack(spacing: 0) {
-                header
+                header(appearance: appearance)
                 Rectangle().fill(MactermTheme.border).frame(height: 1).accessibilityHidden(true)
                 AgentTranscript(
                     rows: bridge.displayRows,
@@ -21,7 +25,14 @@ struct AgentPaneView: View {
                     isPendingSend: bridge.pendingSend != nil,
                     isBusy: bridge.isBusy,
                     isWaiting: bridge.isWaiting,
-                    hasPendingPermission: !bridge.pendingPermissions.isEmpty
+                    hasPendingPermission: !bridge.pendingPermissions.isEmpty,
+                    appearance: appearance,
+                    onPreviewAttachment: { row, attachment in
+                        previewContext = AgentAttachmentPreviewContext(
+                            attachments: row.resolvedAttachments,
+                            selectedID: attachment.id
+                        )
+                    }
                 )
                 if let permission = bridge.pendingPermissions.first {
                     AgentPermissionCard(
@@ -30,6 +41,7 @@ struct AgentPaneView: View {
                         isPending: bridge.pendingPermissionID == permission.id,
                         isDisabled: surface.isReadOnly || !bridge.isReady || bridge.pendingPermissionID != nil,
                         isRejected: bridge.permissionRejected,
+                        appearance: appearance,
                         onSelect: { optionID in
                             bridge.respondToPermission(permission.id, optionID: optionID, from: surface)
                         },
@@ -37,21 +49,27 @@ struct AgentPaneView: View {
                             bridge.respondToPermission(permission.id, optionID: nil, from: surface)
                         }
                     )
-                    .frame(maxWidth: agentColumnWidth)
+                    .frame(maxWidth: appearance.contentWidth.maxWidth ?? .infinity)
                     .padding(.horizontal, 16)
                     .padding(.top, 4)
                     .padding(.bottom, 4)
                 }
-                composer(maxEditorHeight: min(240, max(36, pane.size.height * 0.4)))
+                composer(
+                    maxEditorHeight: min(240, max(appearance.composerMinHeight, pane.size.height * 0.4)),
+                    appearance: appearance
+                )
             }
         }
         .foregroundStyle(MactermTheme.fg)
         .tint(MactermTheme.accent)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(nsColor: MactermTheme.nsConfiguredBg.withAlphaComponent(1)))
+        .sheet(item: $previewContext) { context in
+            AgentAttachmentPreviewSheet(context: context, appearance: appearance)
+        }
     }
 
-    private var header: some View {
+    private func header(appearance: AgentAppearance) -> some View {
         HStack(spacing: 8) {
             if let icon = bridge.provider.icon {
                 Image(icon.rawValue)
@@ -67,16 +85,16 @@ struct AgentPaneView: View {
                     .foregroundStyle(MactermTheme.accent)
                     .accessibilityHidden(true)
             }
-            Text(verbatim: bridge.provider.displayName).font(.headline)
+            Text(verbatim: bridge.provider.displayName).font(appearance.headlineFont)
             Spacer(minLength: 4)
             if !bridge.pendingPermissions.isEmpty {
                 Text("Permission Required")
-                    .font(.caption)
+                    .font(appearance.captionFont())
                     .foregroundStyle(MactermTheme.warning)
                     .lineLimit(1)
             } else if bridge.isWaiting {
                 Text("Continue in Terminal")
-                    .font(.caption)
+                    .font(appearance.captionFont())
                     .foregroundStyle(MactermTheme.warning)
                     .lineLimit(1)
             } else if bridge.isBusy {
@@ -114,11 +132,28 @@ struct AgentPaneView: View {
         .padding(.vertical, 10)
     }
 
-    private func composer(maxEditorHeight: CGFloat) -> some View {
+    private func composer(maxEditorHeight: CGFloat, appearance: AgentAppearance) -> some View {
         VStack(spacing: 4) {
+            if !bridge.draftAttachments.isEmpty {
+                AgentComposerAttachmentsBar(
+                    attachments: bridge.draftAttachments,
+                    isDisabled: surface.isReadOnly || bridge.pendingSend != nil,
+                    appearance: appearance,
+                    onPreview: { attachment in
+                        previewContext = AgentAttachmentPreviewContext(
+                            attachments: bridge.draftAttachments,
+                            selectedID: attachment.id
+                        )
+                    },
+                    onRemove: { attachment in
+                        bridge.removeDraftAttachment(id: attachment.id)
+                    }
+                )
+            }
             ZStack(alignment: .topLeading) {
                 if bridge.draft.isEmpty {
                     Text("Write a message…")
+                        .font(appearance.bodyFont())
                         .foregroundStyle(MactermTheme.fgMuted)
                         .padding(.horizontal, 12)
                         .padding(.top, 8)
@@ -129,24 +164,24 @@ struct AgentPaneView: View {
                     text: $bridge.draft,
                     focus: focus,
                     isEditable: !surface.isReadOnly,
+                    font: appearance.bodyNSFont(),
+                    minHeight: appearance.composerMinHeight,
                     maxHeight: maxEditorHeight,
-                    submit: { bridge.submit(from: surface) }
+                    submit: { bridge.submit(from: surface) },
+                    onPaste: { pasteboard in handlePaste(pasteboard) }
                 )
             }
-            if hasComposerControls, hasComposerStatus {
+            if hasComposerStatus {
                 composerStatus
-                    .font(.caption)
-                    .lineLimit(1)
+                    .font(appearance.captionFont())
+                    .lineLimit(2)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 12)
             }
             HStack(spacing: 6) {
+                addAttachmentButton
                 if hasComposerControls {
                     composerControls
-                } else {
-                    composerStatus
-                        .font(.caption)
-                        .lineLimit(1)
                 }
                 Spacer(minLength: 4)
                 if bridge.isBusy {
@@ -177,12 +212,52 @@ struct AgentPaneView: View {
         }
         .background(MactermTheme.surface, in: RoundedRectangle(cornerRadius: 12))
         .overlay {
-            RoundedRectangle(cornerRadius: 12).strokeBorder(MactermTheme.border).allowsHitTesting(false)
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(isDropTargeted ? MactermTheme.accent : MactermTheme.border, lineWidth: isDropTargeted ? 1.5 : 1)
+                .allowsHitTesting(false)
         }
-        .frame(maxWidth: agentColumnWidth)
+        .onDrop(of: [.fileURL, .image], isTargeted: $isDropTargeted) { providers in
+            handleDrop(providers)
+        }
+        .frame(maxWidth: appearance.contentWidth.maxWidth ?? .infinity)
         .padding(.horizontal, 16)
         .padding(.bottom, 12)
         .padding(.top, 4)
+    }
+
+    private var addAttachmentButton: some View {
+        let canAttach = !surface.isReadOnly && bridge.pendingSend == nil
+        return Menu {
+            Button {
+                pickAttachments(mode: .imagesOnly)
+            } label: {
+                Label("Add Image…", systemImage: "photo")
+            }
+            Button {
+                pickAttachments(mode: .textOnly)
+            } label: {
+                Label("Add Text File…", systemImage: "doc.text")
+            }
+        } label: {
+            Image(systemName: "plus")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(MactermTheme.fg)
+                .frame(width: 24, height: 22)
+                .background(MactermTheme.bg, in: RoundedRectangle(cornerRadius: 6))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 6)
+                        .strokeBorder(MactermTheme.border)
+                        .allowsHitTesting(false)
+                }
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .disabled(!canAttach)
+        .opacity(canAttach ? 1 : 0.6)
+        .pointingHandCursor(canAttach)
+        .help(Text("Add Image or Text File"))
+        .accessibilityLabel(Text("Add Image or Text File"))
     }
 
     private var hasComposerControls: Bool {
@@ -191,7 +266,7 @@ struct AgentPaneView: View {
 
     private var hasComposerStatus: Bool {
         surface.isReadOnly || bridge.sendRejected || bridge.configRejected
-            || bridge.newConversationRejected || bridge.draft.utf8.count > 128 * 1024
+            || bridge.newConversationRejected || bridge.attachmentError != nil || bridge.isDraftTooLong
     }
 
     private var canStartAction: Bool {
@@ -226,20 +301,124 @@ struct AgentPaneView: View {
     private var composerStatus: some View {
         if surface.isReadOnly {
             Label("Read-Only", systemImage: "lock").foregroundStyle(MactermTheme.fgMuted)
+        } else if let attachmentError = bridge.attachmentError {
+            Text(verbatim: attachmentError.localizedMessage).foregroundStyle(MactermTheme.failure)
         } else if bridge.sendRejected {
             Text("The agent did not confirm the message.").foregroundStyle(MactermTheme.failure)
         } else if bridge.configRejected {
             Text("The agent did not apply the setting.").foregroundStyle(MactermTheme.failure)
         } else if bridge.newConversationRejected {
             Text("The agent did not start a new conversation.").foregroundStyle(MactermTheme.failure)
-        } else if bridge.draft.utf8.count > 128 * 1024 {
+        } else if bridge.isDraftTooLong {
             Text("The message is too long.").foregroundStyle(MactermTheme.failure)
         }
     }
 
     private var canSubmit: Bool {
-        canStartAction
-            && !bridge.draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && bridge.draft.utf8.count <= 128 * 1024
+        canStartAction && bridge.hasDraftContent && !bridge.isDraftTooLong
+    }
+
+    private func pickAttachments(mode: AgentAttachmentLoader.Mode) {
+        guard !surface.isReadOnly, bridge.pendingSend == nil else { return }
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        switch mode {
+        case .imagesOnly:
+            panel.allowedContentTypes = [.image]
+            panel.message = String(localized: "Choose one or more images to attach.")
+        case .textOnly:
+            panel.allowedContentTypes = []
+            panel.message = String(localized: "Choose one or more text files to attach.")
+        case .any:
+            panel.allowedContentTypes = []
+        }
+
+        let applySelection: (NSApplication.ModalResponse) -> Void = { response in
+            guard response == .OK, !panel.urls.isEmpty else { return }
+            let result = AgentAttachmentLoader.load(
+                urls: panel.urls,
+                existing: bridge.draftAttachments,
+                mode: mode
+            )
+            bridge.appendDraftAttachments(result.attachments, error: result.error)
+            if let input = focus.input {
+                input.window?.makeFirstResponder(input)
+            }
+        }
+
+        if let window = focus.input?.window ?? NSApp.keyWindow {
+            panel.beginSheetModal(for: window, completionHandler: applySelection)
+        } else {
+            applySelection(panel.runModal())
+        }
+    }
+
+    private func handlePaste(_ pasteboard: NSPasteboard) -> Bool {
+        guard !surface.isReadOnly, bridge.pendingSend == nil else { return false }
+        switch AgentAttachmentLoader.loadFromPasteboard(pasteboard, existing: bridge.draftAttachments) {
+        case .notHandled:
+            return false
+        case let .handled(attachments, error):
+            bridge.appendDraftAttachments(attachments, error: error)
+            return true
+        }
+    }
+
+    private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
+        guard !surface.isReadOnly, bridge.pendingSend == nil else { return false }
+        let matching = providers.filter {
+            $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
+                || $0.hasItemConformingToTypeIdentifier(UTType.image.identifier)
+        }
+        guard !matching.isEmpty else { return false }
+
+        for provider in matching {
+            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+                    let resolvedURL: URL? = if let url = item as? URL {
+                        url
+                    } else if let data = item as? Data {
+                        URL(dataRepresentation: data, relativeTo: nil)
+                    } else {
+                        nil
+                    }
+                    guard let resolvedURL else { return }
+                    Task { @MainActor in
+                        let result = AgentAttachmentLoader.load(
+                            urls: [resolvedURL],
+                            existing: bridge.draftAttachments,
+                            mode: .any
+                        )
+                        bridge.appendDraftAttachments(result.attachments, error: result.error)
+                    }
+                }
+            } else if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+                let suggestedName = provider.suggestedName
+                provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in
+                    guard let data else { return }
+                    Task { @MainActor in
+                        let name = suggestedName ?? AgentAttachmentLoader.nextPastedImageName(
+                            ext: "png",
+                            existing: bridge.draftAttachments
+                        )
+                        let result = AgentAttachmentLoader.loadImageData(
+                            data,
+                            suggestedName: name,
+                            preferredMIMEType: nil,
+                            path: nil,
+                            existing: bridge.draftAttachments
+                        )
+                        bridge.appendDraftAttachments(
+                            result.attachment.map { [$0] } ?? [],
+                            error: result.error
+                        )
+                    }
+                }
+            }
+        }
+        return true
     }
 }
 
@@ -527,6 +706,7 @@ private struct AgentPermissionCard: View {
     let isPending: Bool
     let isDisabled: Bool
     let isRejected: Bool
+    let appearance: AgentAppearance
     let onSelect: (String) -> Void
     let onCancel: () -> Void
 
@@ -547,16 +727,17 @@ private struct AgentPermissionCard: View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
                 Image(systemName: "hand.raised.fill")
-                    .font(.callout)
+                    .font(appearance.calloutFont())
                     .foregroundStyle(MactermTheme.warning)
                     .accessibilityHidden(true)
                 Text(verbatim: request.title)
-                    .font(.callout.weight(.semibold))
+                    .font(appearance.calloutFont(weight: .semibold))
                     .lineLimit(2)
                 Spacer(minLength: 4)
                 if remainingCount > 0 {
                     Text(verbatim: "+\(remainingCount)")
-                        .font(.caption.monospacedDigit())
+                        .font(appearance.captionFont())
+                        .monospacedDigit()
                         .foregroundStyle(MactermTheme.fgMuted)
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
@@ -569,7 +750,8 @@ private struct AgentPermissionCard: View {
 
             if let details = request.details, !details.isEmpty {
                 let detailsText = Text(verbatim: details)
-                    .font(.system(.caption, design: .monospaced))
+                    .font(appearance.codeFont(size: appearance.captionCodeSize))
+                    .lineSpacing(max(1, appearance.lineSpacingPoints * 0.75))
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -589,7 +771,7 @@ private struct AgentPermissionCard: View {
 
             if isRejected {
                 Text("The agent did not confirm the permission response.")
-                    .font(.caption)
+                    .font(appearance.captionFont())
                     .foregroundStyle(MactermTheme.failure)
             }
 
@@ -691,6 +873,8 @@ private struct AgentTranscript: View {
     let isBusy: Bool
     let isWaiting: Bool
     let hasPendingPermission: Bool
+    let appearance: AgentAppearance
+    let onPreviewAttachment: (AgentBridge.Row, AgentAttachment) -> Void
 
     private var isWorking: Bool {
         isPendingSend || isBusy || isWaiting
@@ -698,11 +882,13 @@ private struct AgentTranscript: View {
 
     var body: some View {
         GeometryReader { viewport in
-            let columnWidth = max(0, min(agentColumnWidth, viewport.size.width - 32))
+            let columnWidth = appearance.contentWidth.resolvedWidth(for: viewport.size.width)
             if rows.isEmpty, !isWorking {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Start a conversation").font(.title2.weight(.semibold))
-                    Text("Ask a question or describe a task.").foregroundStyle(MactermTheme.fgMuted)
+                    Text("Start a conversation").font(appearance.emptyTitleFont)
+                    Text("Ask a question or describe a task.")
+                        .font(appearance.bodyFont())
+                        .foregroundStyle(MactermTheme.fgMuted)
                 }
                 .frame(maxWidth: columnWidth, alignment: .leading)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -720,7 +906,7 @@ private struct AgentTranscript: View {
                                     isStreaming: isWorking && !isWaiting && !hasPendingPermission && entry.id == lastEntry?.id
                                 )
                             case let .tools(rows):
-                                AgentToolGroup(rows: rows)
+                                AgentToolGroup(rows: rows, appearance: appearance)
                             }
                         }
                         if showsStandaloneProgress(after: lastEntry) {
@@ -758,7 +944,7 @@ private struct AgentTranscript: View {
                     Image(systemName: "sparkle").foregroundStyle(MactermTheme.accent).accessibilityHidden(true)
                     Text(verbatim: agentName).foregroundStyle(MactermTheme.fgMuted)
                 }
-                .font(.caption.weight(.semibold))
+                .font(appearance.captionFont(weight: .semibold))
             }
             HStack(spacing: 8) {
                 if isWaiting {
@@ -776,7 +962,7 @@ private struct AgentTranscript: View {
                     }
                 }
             }
-            .font(.callout)
+            .font(appearance.calloutFont())
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -813,22 +999,40 @@ private struct AgentTranscript: View {
 
     @ViewBuilder
     private func message(_ row: AgentBridge.Row, width: CGFloat, isStreaming: Bool) -> some View {
+        let attachments = row.resolvedAttachments
         if row.kind == .user {
-            VStack(alignment: .trailing, spacing: 4) {
-                Text("You").font(.caption.weight(.medium)).foregroundStyle(MactermTheme.fgMuted)
-                Text(verbatim: row.text)
-                    .textSelection(.enabled)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(MactermTheme.accentSoft, in: RoundedRectangle(cornerRadius: 10))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 10).strokeBorder(MactermTheme.border).allowsHitTesting(false)
-                    }
+            VStack(alignment: .trailing, spacing: 6) {
+                Text("You").font(appearance.captionFont(weight: .medium)).foregroundStyle(MactermTheme.fgMuted)
+                if !attachments.isEmpty {
+                    AgentMessageAttachmentsView(
+                        attachments: attachments,
+                        alignment: .trailing,
+                        maxWidth: width * 0.84,
+                        appearance: appearance,
+                        onPreview: { onPreviewAttachment(row, $0) }
+                    )
+                }
+                if !row.text.isEmpty {
+                    Text(verbatim: row.text)
+                        .font(appearance.bodyFont())
+                        .lineSpacing(appearance.lineSpacingPoints)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(MactermTheme.accentSoft, in: RoundedRectangle(cornerRadius: 10))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 10).strokeBorder(MactermTheme.border).allowsHitTesting(false)
+                        }
+                }
             }
             .frame(maxWidth: width * 0.84, alignment: .trailing)
             .frame(maxWidth: .infinity, alignment: .trailing)
-            .contextMenu { Button("Copy Message") { copyAgentText(row.text) } }
+            .contextMenu {
+                if !row.text.isEmpty {
+                    Button("Copy Message") { copyAgentText(row.text) }
+                }
+            }
         } else {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
@@ -838,10 +1042,25 @@ private struct AgentTranscript: View {
                         ProgressView().controlSize(.mini).accessibilityLabel(Text("Agent is working"))
                     }
                 }
-                .font(.caption.weight(.semibold))
-                AgentMarkdownView(source: row.text)
+                .font(appearance.captionFont(weight: .semibold))
+                if !row.text.isEmpty {
+                    AgentMarkdownView(source: row.text, appearance: appearance)
+                }
+                if !attachments.isEmpty {
+                    AgentMessageAttachmentsView(
+                        attachments: attachments,
+                        alignment: .leading,
+                        maxWidth: width,
+                        appearance: appearance,
+                        onPreview: { onPreviewAttachment(row, $0) }
+                    )
+                }
             }
-            .contextMenu { Button("Copy Message") { copyAgentText(row.text) } }
+            .contextMenu {
+                if !row.text.isEmpty {
+                    Button("Copy Message") { copyAgentText(row.text) }
+                }
+            }
         }
     }
 }
@@ -892,6 +1111,7 @@ private struct AgentTranscriptScroll<Content: View>: View {
 
 private struct AgentToolGroup: View {
     let rows: [AgentBridge.Row]
+    let appearance: AgentAppearance
 
     var body: some View {
         DisclosureGroup {
@@ -923,7 +1143,7 @@ private struct AgentToolGroup: View {
                 }
             }
         }
-        .font(.callout)
+        .font(appearance.calloutFont())
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(MactermTheme.surface, in: RoundedRectangle(cornerRadius: 8))
@@ -932,7 +1152,8 @@ private struct AgentToolGroup: View {
     private func tool(_ row: AgentBridge.Row) -> some View {
         DisclosureGroup {
             Text(verbatim: row.text)
-                .font(.system(.callout, design: .monospaced))
+                .font(appearance.codeFont())
+                .lineSpacing(max(1, appearance.lineSpacingPoints * 0.75))
                 .textSelection(.enabled)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -951,7 +1172,7 @@ private struct AgentToolGroup: View {
                 }
             }
         }
-        .font(.caption)
+        .font(appearance.captionFont())
     }
 }
 
@@ -966,14 +1187,18 @@ private struct AgentComposer: NSViewRepresentable {
     @Binding var text: String
     let focus: AgentPaneFocus
     let isEditable: Bool
+    let font: NSFont
+    let minHeight: CGFloat
     let maxHeight: CGFloat
     let submit: () -> Void
+    let onPaste: (NSPasteboard) -> Bool
 
     private static let inset = NSSize(width: 12, height: 8)
 
     final class InputView: NSTextView {
         weak var focus: AgentPaneFocus?
         var submit: (() -> Void)?
+        var onPaste: ((NSPasteboard) -> Bool)?
 
         override func keyDown(with event: NSEvent) {
             let modifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
@@ -984,6 +1209,14 @@ private struct AgentComposer: NSViewRepresentable {
                 return
             }
             if !event.isARepeat { submit?() }
+        }
+
+        override func paste(_ sender: Any?) {
+            guard isEditable else { return }
+            if onPaste?(NSPasteboard.general) == true {
+                return
+            }
+            super.paste(sender)
         }
 
         override func becomeFirstResponder() -> Bool {
@@ -1019,7 +1252,7 @@ private struct AgentComposer: NSViewRepresentable {
         input.isRichText = false
         input.allowsUndo = true
         input.drawsBackground = false
-        input.font = .systemFont(ofSize: NSFont.systemFontSize)
+        input.font = font
         input.textContainerInset = Self.inset
         input.textContainer?.lineFragmentPadding = 0
         scroll.hasVerticalScroller = false
@@ -1032,15 +1265,21 @@ private struct AgentComposer: NSViewRepresentable {
         guard let input = scroll.documentView as? InputView else { return }
         input.isEditable = isEditable
         input.submit = submit
+        input.onPaste = onPaste
+        if input.font != font {
+            input.font = font
+            input.typingAttributes[.font] = font
+            if let storage = input.textStorage, storage.length > 0 {
+                storage.addAttribute(.font, value: font, range: NSRange(location: 0, length: storage.length))
+            }
+        }
         input.textColor = MactermTheme.nsFg
         input.insertionPointColor = MactermTheme.nsFg
         if input.string != text, !input.hasMarkedText() { input.string = text }
     }
 
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView scroll: NSScrollView, context _: Context) -> CGSize? {
-        guard let width = proposal.width, width.isFinite, let input = scroll.documentView as? NSTextView,
-              let font = input.font
-        else { return nil }
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView _: NSScrollView, context _: Context) -> CGSize? {
+        guard let width = proposal.width, width.isFinite else { return nil }
 
         let storage = NSTextStorage(string: text, attributes: [.font: font])
         let layout = NSLayoutManager()
@@ -1053,16 +1292,22 @@ private struct AgentComposer: NSViewRepresentable {
         layout.ensureLayout(for: container)
 
         let height = max(layout.usedRect(for: container).maxY, layout.extraLineFragmentRect.maxY)
-        return CGSize(width: width, height: min(maxHeight, max(36, ceil(height + Self.inset.height * 2))))
+        return CGSize(width: width, height: min(maxHeight, max(minHeight, ceil(height + Self.inset.height * 2))))
+    }
+}
+
+extension View {
+    func agentPointingHandCursor(_ enabled: Bool = true) -> some View {
+        overlay {
+            AgentPointerCursor(enabled: enabled)
+                .allowsHitTesting(false)
+        }
     }
 }
 
 private extension View {
     func pointingHandCursor(_ enabled: Bool = true) -> some View {
-        overlay {
-            AgentPointerCursor(enabled: enabled)
-                .allowsHitTesting(false)
-        }
+        agentPointingHandCursor(enabled)
     }
 }
 

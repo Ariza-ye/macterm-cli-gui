@@ -144,6 +144,22 @@
         }
       }
     },
+    "%@ exceeds the attachment size limit." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 파일이 첨부 크기 제한을 초과합니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 超过附件大小限制。"
+          }
+        }
+      }
+    },
     "%@ failed with exit code %lld and has not succeeded since." : {
       "localizations" : {
         "en" : {
@@ -200,6 +216,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%@ 不是项目，因此没有洞察。"
+          }
+        }
+      }
+    },
+    "%@ is not a supported image or UTF-8 text file." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 파일은 지원하는 이미지 또는 UTF-8 텍스트 파일이 아닙니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 不是受支持的图片或 UTF-8 文本文件。"
           }
         }
       }
@@ -504,6 +536,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "%2$@ 中运行了 %1$lld 条命令，最后一条在%3$@运行。"
+          }
+        }
+      }
+    },
+    "%lld lines" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld줄"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 行"
           }
         }
       }
@@ -1036,6 +1084,38 @@
         }
       }
     },
+    "Add Image or Text File" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이미지 또는 텍스트 파일 추가"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "添加图片或文本文件"
+          }
+        }
+      }
+    },
+    "Add Image…" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이미지 추가…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "添加图片…"
+          }
+        }
+      }
+    },
     "Add Password" : {
       "localizations" : {
         "ko" : {
@@ -1112,6 +1192,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "添加规则"
+          }
+        }
+      }
+    },
+    "Add Text File…" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "텍스트 파일 추가…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "添加文本文件…"
           }
         }
       }
@@ -1646,6 +1742,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "在填充或显示已存储的密码之前，要求 Touch ID 或你的登录密码。"
+          }
+        }
+      }
+    },
+    "Attachments exceed the total size limit." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "첨부 파일이 전체 크기 제한을 초과합니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "附件总大小超过限制。"
           }
         }
       }
@@ -2264,6 +2376,22 @@
         }
       }
     },
+    "Changes apply immediately to open Agent GUI panes." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "변경 사항은 열려 있는 모든 Agent GUI 페인에 즉시 적용됩니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "更改会立即应用到所有已打开的 Agent GUI 窗格。"
+          }
+        }
+      }
+    },
     "Changes take effect at the next prompt in open shells. Rules only intercept bare commands or --conversation ID." : {
       "localizations" : {
         "ko" : {
@@ -2388,6 +2516,38 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "选择文件…"
+          }
+        }
+      }
+    },
+    "Choose one or more images to attach." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "첨부할 이미지를 하나 이상 선택하세요."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择一个或多个要附加的图片。"
+          }
+        }
+      }
+    },
+    "Choose one or more text files to attach." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "첨부할 텍스트 파일을 하나 이상 선택하세요."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择一个或多个要附加的文本文件。"
           }
         }
       }
@@ -2666,6 +2826,22 @@
         }
       }
     },
+    "Code font" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "코드 서체"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "代码字体"
+          }
+        }
+      }
+    },
     "Color" : {
       "localizations" : {
         "ko" : {
@@ -2758,6 +2934,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "命令面板"
+          }
+        }
+      }
+    },
+    "Compact" : {
+      "comment" : "Agent GUI content width",
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "좁게"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "紧凑"
           }
         }
       }
@@ -2941,6 +3134,22 @@
         }
       }
     },
+    "Content width" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "콘텐츠 너비"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "内容宽度"
+          }
+        }
+      }
+    },
     "Continue Without Server" : {
       "comment" : "The button that closes the server install sheet with no install.",
       "localizations" : {
@@ -3003,6 +3212,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "拷贝代码"
+          }
+        }
+      }
+    },
+    "Copy Image" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이미지 복사"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "复制图片"
           }
         }
       }
@@ -3100,6 +3325,54 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "拷贝会话 ID"
+          }
+        }
+      }
+    },
+    "Copy Text" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "텍스트 복사"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "复制文本"
+          }
+        }
+      }
+    },
+    "Could not read %@." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 파일을 읽을 수 없습니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法读取 %@。"
+          }
+        }
+      }
+    },
+    "Could not render image preview." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이미지 미리보기를 표시할 수 없습니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法渲染图片预览。"
           }
         }
       }
@@ -3856,6 +4129,22 @@
         }
       }
     },
+    "Fit" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "맞춤"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "适应窗口"
+          }
+        }
+      }
+    },
     "Fixed" : {
       "comment" : "Quick terminal position or size: from the Settings sliders",
       "localizations" : {
@@ -4049,6 +4338,22 @@
         }
       }
     },
+    "Font" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "서체"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "字体"
+          }
+        }
+      }
+    },
     "Foreground Process" : {
       "localizations" : {
         "ko" : {
@@ -4077,6 +4382,23 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "完全磁盘访问权限已关闭"
+          }
+        }
+      }
+    },
+    "Full width" : {
+      "comment" : "Agent GUI content width",
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "전체 너비"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "铺满宽度"
           }
         }
       }
@@ -5083,6 +5405,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "浅色"
+          }
+        }
+      }
+    },
+    "Line spacing" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "줄 간격"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "行距"
           }
         }
       }
@@ -6280,6 +6618,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "在 ${project} 中新建标签页"
+          }
+        }
+      }
+    },
+    "Next Attachment" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "다음 첨부 파일"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "下一个附件"
           }
         }
       }
@@ -7945,6 +8299,54 @@
         }
       }
     },
+    "Preview image %@" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이미지 %@ 미리보기"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "预览图片 %@"
+          }
+        }
+      }
+    },
+    "Preview text file %@" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "텍스트 파일 %@ 미리보기"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "预览文本文件 %@"
+          }
+        }
+      }
+    },
+    "Previous Attachment" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이전 첨부 파일"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "上一个附件"
+          }
+        }
+      }
+    },
     "Previous Pane" : {
       "localizations" : {
         "ko" : {
@@ -8610,6 +9012,22 @@
         }
       }
     },
+    "Remove %@" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 제거"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移除 %@"
+          }
+        }
+      }
+    },
     "Remove %lld Items" : {
       "localizations" : {
         "ko" : {
@@ -8638,6 +9056,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "移除 %lld 个项目"
+          }
+        }
+      }
+    },
+    "Remove Attachment" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "첨부 파일 제거"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "移除附件"
           }
         }
       }
@@ -9025,6 +9459,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "必填"
+          }
+        }
+      }
+    },
+    "Reset to Defaults" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "기본값으로 재설정"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "恢复默认设置"
           }
         }
       }
@@ -10738,6 +11188,23 @@
         }
       }
     },
+    "Standard" : {
+      "comment" : "Agent GUI content width",
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "표준"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "标准"
+          }
+        }
+      }
+    },
     "Start a conversation" : {
       "localizations" : {
         "ko" : {
@@ -10947,6 +11414,38 @@
         }
       }
     },
+    "System Default" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "시스템 기본값"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "系统默认"
+          }
+        }
+      }
+    },
+    "System Monospaced" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "시스템 고정폭"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "系统等宽"
+          }
+        }
+      }
+    },
     "Tab" : {
       "localizations" : {
         "ko" : {
@@ -11089,6 +11588,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "终端内容区域"
+          }
+        }
+      }
+    },
+    "Text size" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "텍스트 크기"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "文字大小"
           }
         }
       }
@@ -12077,6 +12592,22 @@
         }
       }
     },
+    "Toggle Fit and Actual Size" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "화면 맞춤 및 실제 크기 전환"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "切换适应窗口与实际大小"
+          }
+        }
+      }
+    },
     "Toggle Project Insights" : {
       "localizations" : {
         "ko" : {
@@ -12779,6 +13310,23 @@
         }
       }
     },
+    "Wide" : {
+      "comment" : "Agent GUI content width",
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "넓게"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "宽"
+          }
+        }
+      }
+    },
     "Widget %lld" : {
       "comment" : "Settings → Widgets: the name of a widget that has no name",
       "localizations" : {
@@ -12965,6 +13513,22 @@
         }
       }
     },
+    "You can attach up to %lld files per message." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "메시지당 최대 %lld개의 파일을 첨부할 수 있습니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "每条消息最多可附加 %lld 个文件。"
+          }
+        }
+      }
+    },
     "You changed %@. Your changed copy goes to the Trash." : {
       "localizations" : {
         "ko" : {
@@ -13046,6 +13610,38 @@
         }
       }
     },
+    "Zoom In" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "확대"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "放大"
+          }
+        }
+      }
+    },
+    "Zoom Out" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "축소"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "缩小"
+          }
+        }
+      }
+    },
     "Zoom Pane" : {
       "localizations" : {
         "ko" : {
@@ -13090,6 +13686,78 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "[user@]host 或 ssh 别名"
+          }
+        }
+      }
+    },
+    "agents.appearance.previewMarkdown" : {
+      "comment" : "Live preview markdown sample in Settings → Agents",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Use **bold** emphasis and inline `code` together.\n\n```swift\nlet greeting = \"Hello, Macterm\"\nprint(greeting)\n```"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "**굵은** 강조와 인라인 `code`를 함께 표시합니다.\n\n```swift\nlet greeting = \"Hello, Macterm\"\nprint(greeting)\n```"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "可同时展示**粗体**强调与行内 `code`。\n\n```swift\nlet greeting = \"Hello, Macterm\"\nprint(greeting)\n```"
+          }
+        }
+      }
+    },
+    "agents.appearance.previewQuestion" : {
+      "comment" : "Live preview user message in Settings → Agents",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "How does the Agent GUI look?"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agent GUI 화면이 어떻게 보이나요?"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agent GUI 的显示效果如何？"
+          }
+        }
+      }
+    },
+    "agents.appearance.section" : {
+      "comment" : "Settings → Agents section header",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Appearance"
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "스타일"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "外观"
           }
         }
       }

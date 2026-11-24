@@ -9,12 +9,23 @@ type Entry = ReturnType<ExtensionContext["sessionManager"]["getBranch"]>[number]
 type Message = Extract<Entry, { type: "message" }>["message"];
 type PiModel = NonNullable<ExtensionContext["model"]>;
 type ThinkingLevel = ReturnType<ExtensionAPI["getThinkingLevel"]>;
+type Attachment = {
+    id: string;
+    kind: "image" | "text";
+    name: string;
+    mimeType: string;
+    data?: string;
+    text?: string;
+    byteCount?: number;
+    path?: string;
+};
 type Row = {
     id: string;
     kind: "user" | "assistant" | "tool";
     text: string;
     name?: string;
     status?: "running" | "completed" | "failed";
+    attachments?: Attachment[];
 };
 type ConfigChoice = {
     value: string;
@@ -54,6 +65,95 @@ function supportedThinkingLevels(model: ExtensionContext["model"]): ThinkingLeve
     });
 }
 
+const MAX_ATTACHMENTS = 10;
+const MAX_TEXT_ATTACHMENT_BYTES = 128 * 1024;
+const MAX_IMAGE_ATTACHMENT_BYTES = 5 * 1024 * 1024;
+const MAX_TOTAL_ATTACHMENT_BYTES = 12 * 1024 * 1024;
+const MAX_FRAME_BYTES = 24 * 1024 * 1024;
+
+const TEXT_ATTACHMENT_BLOCK_RE = /(?:^|\n)--- Attached file: ([^\r\n]+) ---\n([\s\S]*?)\n--- End of ([^\r\n]+) ---(?=\n|$)/g;
+
+function decodedBase64Bytes(base64: string): number {
+    const compact = base64.replace(/\s+/g, "");
+    if (!compact) return 0;
+    const padding = compact.endsWith("==") ? 2 : compact.endsWith("=") ? 1 : 0;
+    return Math.max(0, Math.floor((compact.length * 3) / 4) - padding);
+}
+
+function formatTextAttachment(attachment: Attachment): string {
+    const name = stripVTControlCharacters(attachment.name || "attachment.txt").replace(/[\r\n]/g, " ");
+    return `--- Attached file: ${name} ---\n${attachment.text ?? ""}\n--- End of ${name} ---`;
+}
+
+function splitTextAttachments(raw: string, idPrefix: string, remainingCapacity: number): { text: string; attachments: Attachment[] } {
+    if (remainingCapacity <= 0 || !raw.includes("--- Attached file: ")) {
+        return { text: raw, attachments: [] };
+    }
+    const attachments: Attachment[] = [];
+    let cursor = 0;
+    let remaining = "";
+    TEXT_ATTACHMENT_BLOCK_RE.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = TEXT_ATTACHMENT_BLOCK_RE.exec(raw)) !== null && attachments.length < remainingCapacity) {
+        if (match[1] !== match[3]) continue;
+        remaining += raw.slice(cursor, match.index);
+        cursor = match.index + match[0].length;
+        const name = stripVTControlCharacters(match[1]).trim().slice(0, 128) || "attachment.txt";
+        const text = stripVTControlCharacters(match[2]);
+        attachments.push({
+            id: `${idPrefix}:${attachments.length}`,
+            kind: "text",
+            name,
+            mimeType: "text/plain",
+            text,
+            byteCount: Buffer.byteLength(text, "utf8"),
+        });
+    }
+    if (attachments.length === 0) return { text: raw, attachments: [] };
+    remaining += raw.slice(cursor);
+    return { text: remaining.trim(), attachments };
+}
+
+function normalizeAttachments(raw: unknown): { valid: boolean; attachments: Attachment[] } {
+    if (raw === undefined || raw === null) return { valid: true, attachments: [] };
+    if (!Array.isArray(raw) || raw.length > MAX_ATTACHMENTS) return { valid: false, attachments: [] };
+    const attachments: Attachment[] = [];
+    let totalBytes = 0;
+    for (const item of raw) {
+        if (!item || typeof item !== "object") return { valid: false, attachments: [] };
+        const candidate = item as Record<string, unknown>;
+        const kind = candidate.kind;
+        const id = typeof candidate.id === "string" && candidate.id.trim() ? candidate.id.slice(0, 128) : randomUUID();
+        const rawName = typeof candidate.name === "string" ? stripVTControlCharacters(candidate.name).trim() : "";
+        const name = (rawName || (kind === "image" ? "image.png" : "attachment.txt")).slice(0, 128);
+        const path = typeof candidate.path === "string" && candidate.path.trim() ? candidate.path.slice(0, 1024) : undefined;
+        if (kind === "image") {
+            const mimeType = typeof candidate.mimeType === "string" ? candidate.mimeType.trim().toLowerCase() : "";
+            const data = typeof candidate.data === "string" ? candidate.data.trim() : "";
+            if (!mimeType.startsWith("image/") || !data) return { valid: false, attachments: [] };
+            const byteCount = decodedBase64Bytes(data);
+            if (byteCount <= 0 || byteCount > MAX_IMAGE_ATTACHMENT_BYTES) return { valid: false, attachments: [] };
+            totalBytes += byteCount;
+            if (totalBytes > MAX_TOTAL_ATTACHMENT_BYTES) return { valid: false, attachments: [] };
+            attachments.push({ id, kind: "image", name, mimeType, data, byteCount, ...(path ? { path } : {}) });
+        } else if (kind === "text") {
+            if (typeof candidate.text !== "string") return { valid: false, attachments: [] };
+            const text = candidate.text;
+            const byteCount = Buffer.byteLength(text, "utf8");
+            if (byteCount > MAX_TEXT_ATTACHMENT_BYTES) return { valid: false, attachments: [] };
+            totalBytes += byteCount;
+            if (totalBytes > MAX_TOTAL_ATTACHMENT_BYTES) return { valid: false, attachments: [] };
+            const mimeType = typeof candidate.mimeType === "string" && candidate.mimeType.trim()
+                ? candidate.mimeType.trim().slice(0, 128)
+                : "text/plain";
+            attachments.push({ id, kind: "text", name, mimeType, text, byteCount, ...(path ? { path } : {}) });
+        } else {
+            return { valid: false, attachments: [] };
+        }
+    }
+    return { valid: true, attachments };
+}
+
 function textContent(content: unknown): string {
     const text = typeof content === "string" ? content : Array.isArray(content)
         ? content.filter((block) => block?.type === "text" && typeof block.text === "string")
@@ -63,13 +163,59 @@ function textContent(content: unknown): string {
     return stripVTControlCharacters(text.length <= limit ? text : `${text.slice(0, limit)}\n…`);
 }
 
+function extractMessageParts(id: string, content: unknown): { text: string; attachments: Attachment[] } {
+    if (typeof content === "string") {
+        const split = splitTextAttachments(content, `${id}:txt:0`, MAX_ATTACHMENTS);
+        return { text: textContent(split.text), attachments: split.attachments };
+    }
+    if (!Array.isArray(content)) return { text: "", attachments: [] };
+    const textParts: string[] = [];
+    const attachments: Attachment[] = [];
+    for (let index = 0; index < content.length; index++) {
+        const block = content[index];
+        if (!block || typeof block !== "object") continue;
+        if (block.type === "text" && typeof block.text === "string") {
+            const split = splitTextAttachments(block.text, `${id}:txt:${index}`, MAX_ATTACHMENTS - attachments.length);
+            attachments.push(...split.attachments);
+            if (split.text) textParts.push(split.text);
+        } else if (
+            block.type === "image"
+            && typeof block.data === "string"
+            && typeof block.mimeType === "string"
+            && attachments.length < MAX_ATTACHMENTS
+        ) {
+            const byteCount = decodedBase64Bytes(block.data);
+            if (byteCount > 0 && byteCount <= MAX_IMAGE_ATTACHMENT_BYTES) {
+                const ext = block.mimeType.split("/")[1]?.split(";")[0] || "png";
+                attachments.push({
+                    id: `${id}:img:${index}`,
+                    kind: "image",
+                    name: `image-${attachments.length + 1}.${ext}`,
+                    mimeType: block.mimeType,
+                    data: block.data,
+                    byteCount,
+                });
+            }
+        }
+    }
+    const joined = textParts.join("\n");
+    const limit = 48 * 1024;
+    const text = stripVTControlCharacters(joined.length <= limit ? joined : `${joined.slice(0, limit)}\n…`);
+    return { text, attachments };
+}
+
 function messageRow(id: string, message: Message): Row | undefined {
     switch (message.role) {
-        case "user":
-            return { id, kind: "user", text: textContent(message.content) };
+        case "user": {
+            const { text, attachments } = extractMessageParts(id, message.content);
+            return { id, kind: "user", text, ...(attachments.length ? { attachments } : {}) };
+        }
         case "assistant": {
-            const text = textContent(message.content) || textContent(message.errorMessage);
-            return text ? { id, kind: "assistant", text } : undefined;
+            const { text: bodyText, attachments } = extractMessageParts(id, message.content);
+            const text = bodyText || textContent(message.errorMessage);
+            return text || attachments.length
+                ? { id, kind: "assistant", text, ...(attachments.length ? { attachments } : {}) }
+                : undefined;
         }
         case "toolResult":
             return {
@@ -260,7 +406,7 @@ function startBridge(
         let buffer = "";
         socket.on("data", (chunk: string) => {
             buffer += chunk;
-            if (buffer.length > 1024 * 1024) { socket.destroy(); return; }
+            if (buffer.length > MAX_FRAME_BYTES) { socket.destroy(); return; }
             let newline: number;
             while ((newline = buffer.indexOf("\n")) >= 0 && !socket.destroyed) {
                 const line = buffer.slice(0, newline);
@@ -270,6 +416,7 @@ function startBridge(
                     id?: string;
                     token?: string;
                     text?: string;
+                    attachments?: unknown;
                     configId?: string;
                     value?: string;
                 };
@@ -352,15 +499,43 @@ function startBridge(
                         sendNewConversationReply(false);
                     }
                 } else if (command.type === "send" && typeof command.id === "string") {
+                    const text = typeof command.text === "string" ? command.text : "";
+                    const normalized = normalizeAttachments(command.attachments);
+                    const hasContent = Boolean(text.trim()) || normalized.attachments.length > 0;
                     if (pending || configPending || pendingNewConversation || waiting || !ctx.isIdle()
-                        || typeof command.text !== "string"
-                        || !command.text.trim() || Buffer.byteLength(command.text) > 128 * 1024) {
+                        || !normalized.valid || !hasContent
+                        || Buffer.byteLength(text) > 128 * 1024) {
                         emit({ type: "reply", id: command.id, accepted: false, ...state() });
                         continue;
                     }
                     pending = { id: command.id, owner: socket, timer: setTimeout(() => sendReply(false), 25000).unref() };
                     // Wait for Pi to start the run before clearing the draft in Macterm.
-                    pi.sendUserMessage(command.text);
+                    if (normalized.attachments.length === 0) {
+                        pi.sendUserMessage(text);
+                    } else {
+                        const blocks: Array<
+                            | { type: "text"; text: string }
+                            | { type: "image"; data: string; mimeType: string }
+                        > = [];
+                        if (text.length > 0) {
+                            blocks.push({ type: "text", text });
+                        }
+                        for (const attachment of normalized.attachments) {
+                            if (attachment.kind === "image" && attachment.data) {
+                                blocks.push({
+                                    type: "image",
+                                    data: attachment.data,
+                                    mimeType: attachment.mimeType,
+                                });
+                            } else if (attachment.kind === "text") {
+                                blocks.push({
+                                    type: "text",
+                                    text: formatTextAttachment(attachment),
+                                });
+                            }
+                        }
+                        pi.sendUserMessage(blocks);
+                    }
                 }
             }
         });

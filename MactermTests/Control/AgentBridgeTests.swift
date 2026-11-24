@@ -740,6 +740,104 @@ struct AgentBridgeTests {
         #expect(!bridge.permissionRejected)
     }
 
+    // MARK: - Attachments
+
+    @Test
+    func bridge_sends_attachments_without_text_and_restores_on_reject() async throws {
+        let (_, registry, appState, projectStore) = makeHandler()
+        let pane = try seedPane(appState, projectStore)
+        let windowID = UUID()
+        let surface = SurfaceRegistry.shared.surface(for: pane, in: .window(windowID))
+        defer {
+            registry.disconnect(pane: pane)
+            SurfaceRegistry.shared.destroySurfaces(of: pane)
+        }
+
+        let (socketPath, serverFD, cleanup) = try makeListeningBridgeSocket(prefix: "agent")
+        defer { cleanup() }
+
+        let bridge = AgentBridge(
+            provider: .antigravity,
+            path: socketPath,
+            conversation: "conv-attach",
+            token: UUID(),
+            windowID: windowID,
+            registry: registry
+        )
+        registry.bind(bridge, toSession: pane.sessionName)
+
+        let peerFD = try await acceptClient(on: serverFD)
+        defer { close(peerFD) }
+        _ = try await readLine(from: peerFD) // hello
+
+        try writeFrame(["type": "snapshot", "conversation": "conv-attach"], to: peerFD)
+        try writeFrame(["type": "snapshotEnd", "busy": false, "waiting": false], to: peerFD)
+        try await waitUntil { bridge.isReady }
+
+        let imageAttachment = AgentAttachment(
+            id: "img-1",
+            kind: .image,
+            name: "mockup.png",
+            mimeType: "image/png",
+            data: Data("fakepng".utf8).base64EncodedString(),
+            byteCount: 7
+        )
+        let textAttachment = AgentAttachment(
+            id: "txt-1",
+            kind: .text,
+            name: "notes.txt",
+            mimeType: "text/plain",
+            text: "line 1\nline 2",
+            byteCount: 13
+        )
+
+        // Attachment-only submission (empty draft text) succeeds and echoes attachments.
+        bridge.appendDraftAttachments([imageAttachment, textAttachment], error: nil)
+        #expect(bridge.hasDraftContent)
+        bridge.submit(from: surface)
+        #expect(bridge.draftAttachments.isEmpty)
+        #expect(bridge.displayRows.count == 1)
+        #expect(bridge.displayRows[0].resolvedAttachments == [imageAttachment, textAttachment])
+
+        let sendLine = try await readLine(from: peerFD)
+        let sendCmd = try #require(JSONSerialization.jsonObject(with: Data(sendLine.utf8)) as? [String: Any])
+        let sendID = try #require(sendCmd["id"] as? String)
+        let wireAttachments = try #require(sendCmd["attachments"] as? [[String: Any]])
+        #expect(wireAttachments.count == 2)
+        #expect(wireAttachments[0]["kind"] as? String == "image")
+        #expect(wireAttachments[1]["kind"] as? String == "text")
+
+        try writeFrame([
+            "type": "row",
+            "row": [
+                "id": "u-att-1",
+                "kind": "user",
+                "text": "",
+                "attachments": wireAttachments,
+            ],
+        ], to: peerFD)
+        try writeFrame(["type": "reply", "id": sendID, "accepted": true, "busy": false, "waiting": false], to: peerFD)
+        try await waitUntil { bridge.pendingSend == nil && bridge.rows.count == 1 }
+        #expect(bridge.rows[0].resolvedAttachments.count == 2)
+        #expect(bridge.rows[0].resolvedAttachments[0].name == "mockup.png")
+        #expect(bridge.rows[0].resolvedAttachments[1].text == "line 1\nline 2")
+
+        // Rejected submission restores both draft text and draft attachments.
+        bridge.draft = "Check this"
+        bridge.appendDraftAttachments([imageAttachment], error: nil)
+        bridge.submit(from: surface)
+        #expect(bridge.draft.isEmpty)
+        #expect(bridge.draftAttachments.isEmpty)
+
+        let rejectLine = try await readLine(from: peerFD)
+        let rejectCmd = try #require(JSONSerialization.jsonObject(with: Data(rejectLine.utf8)) as? [String: Any])
+        let rejectID = try #require(rejectCmd["id"] as? String)
+        try writeFrame(["type": "reply", "id": rejectID, "accepted": false, "busy": false, "waiting": false], to: peerFD)
+        try await waitUntil { bridge.pendingSend == nil && bridge.sendRejected }
+        #expect(bridge.draft == "Check this")
+        #expect(bridge.draftAttachments == [imageAttachment])
+    }
+
     private func makeListeningBridgeSocket(prefix: String) throws -> (String, Int32, () -> Void) {
         let token = String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(6))
         let directory = "/tmp/macterm-\(prefix)-\(token)"
