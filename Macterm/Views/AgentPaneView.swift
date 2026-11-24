@@ -20,6 +20,7 @@ struct AgentPaneView: View {
                 header(appearance: appearance)
                 Rectangle().fill(MactermTheme.border).frame(height: 1).accessibilityHidden(true)
                 AgentTranscript(
+                    conversationID: bridge.conversation,
                     rows: bridge.displayRows,
                     agentName: bridge.provider.displayName,
                     isPendingSend: bridge.pendingSend != nil,
@@ -856,7 +857,43 @@ private struct AgentPermissionActionLayout: Layout {
     }
 }
 
+/// Tracks the visible tail window of transcript entries and anchors expanded history by entry ID.
+struct AgentTranscriptPagination: Equatable {
+    static let defaultPageSize = 30
+
+    let pageSize: Int
+    private(set) var anchorStartID: String?
+
+    init(pageSize: Int = defaultPageSize) {
+        self.pageSize = max(1, pageSize)
+    }
+
+    func visibleStartIndex(in entryIDs: [String]) -> Int {
+        let defaultStart = max(0, entryIDs.count - pageSize)
+        guard let anchorStartID, let anchorIndex = entryIDs.firstIndex(of: anchorStartID) else {
+            return defaultStart
+        }
+        return min(anchorIndex, defaultStart)
+    }
+
+    func hiddenCount(in entryIDs: [String]) -> Int {
+        visibleStartIndex(in: entryIDs)
+    }
+
+    mutating func loadMore(in entryIDs: [String]) {
+        let currentStart = visibleStartIndex(in: entryIDs)
+        guard currentStart > 0 else { return }
+        let nextStart = max(0, currentStart - pageSize)
+        anchorStartID = entryIDs[nextStart]
+    }
+
+    mutating func reset() {
+        anchorStartID = nil
+    }
+}
+
 private struct AgentTranscript: View {
+    let conversationID: String
     let rows: [AgentBridge.Row]
     let agentName: String
     let isPendingSend: Bool
@@ -865,6 +902,10 @@ private struct AgentTranscript: View {
     let hasPendingPermission: Bool
     let appearance: AgentAppearance
     let onPreviewAttachment: (AgentBridge.Row, AgentAttachment) -> Void
+
+    @State private var pagination = AgentTranscriptPagination()
+    @State private var followsBottom = true
+    @State private var pendingAnchorID: String?
 
     private var isWorking: Bool {
         isPendingSend || isBusy || isWaiting
@@ -884,20 +925,37 @@ private struct AgentTranscript: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 let currentEntries = entries
+                let entryIDs = currentEntries.map(\.id)
+                let visibleStart = pagination.visibleStartIndex(in: entryIDs)
+                let visibleEntries = currentEntries[visibleStart ..< currentEntries.count]
                 let lastEntry = currentEntries.last
-                AgentTranscriptScroll(viewportHeight: viewport.size.height) {
+                AgentTranscriptScroll(
+                    viewportHeight: viewport.size.height,
+                    followsBottom: $followsBottom,
+                    pendingAnchorID: $pendingAnchorID
+                ) {
                     VStack(alignment: .leading, spacing: 16) {
-                        ForEach(currentEntries) { entry in
-                            switch entry {
-                            case let .message(row):
-                                message(
-                                    row,
-                                    width: columnWidth,
-                                    isStreaming: isWorking && !isWaiting && !hasPendingPermission && entry.id == lastEntry?.id
-                                )
-                            case let .tools(rows):
-                                AgentToolGroup(rows: rows, appearance: appearance)
+                        if visibleStart > 0 {
+                            earlierHistoryBar(
+                                hiddenCount: visibleStart,
+                                anchorID: visibleEntries.first?.id,
+                                entryIDs: entryIDs
+                            )
+                        }
+                        ForEach(visibleEntries) { entry in
+                            Group {
+                                switch entry {
+                                case let .message(row):
+                                    message(
+                                        row,
+                                        width: columnWidth,
+                                        isStreaming: isWorking && !isWaiting && !hasPendingPermission && entry.id == lastEntry?.id
+                                    )
+                                case let .tools(rows):
+                                    AgentToolGroup(rows: rows, appearance: appearance)
+                                }
                             }
+                            .id(entry.id)
                         }
                         if showsStandaloneProgress(after: lastEntry) {
                             assistantProgress(showHeader: !isAssistantEntry(lastEntry))
@@ -909,6 +967,46 @@ private struct AgentTranscript: View {
                 }
             }
         }
+        .onChange(of: conversationID) { _, _ in
+            resetTranscriptState()
+        }
+        .onChange(of: rows.isEmpty) { _, isEmpty in
+            if isEmpty {
+                resetTranscriptState()
+            }
+        }
+    }
+
+    private func resetTranscriptState() {
+        pagination.reset()
+        followsBottom = true
+        pendingAnchorID = nil
+    }
+
+    private func earlierHistoryBar(hiddenCount: Int, anchorID: String?, entryIDs: [String]) -> some View {
+        HStack(spacing: 10) {
+            Text("\(hiddenCount) earlier items hidden")
+                .font(appearance.captionFont())
+                .foregroundStyle(MactermTheme.fgMuted)
+                .monospacedDigit()
+            Button {
+                loadMore(anchorID: anchorID, entryIDs: entryIDs)
+            } label: {
+                Label("Load More", systemImage: "arrow.up")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .fixedSize()
+            .pointingHandCursor()
+        }
+        .frame(maxWidth: .infinity, alignment: .center)
+        .padding(.vertical, 6)
+    }
+
+    private func loadMore(anchorID: String?, entryIDs: [String]) {
+        pendingAnchorID = anchorID
+        followsBottom = false
+        pagination.loadMore(in: entryIDs)
     }
 
     private func isAssistantEntry(_ entry: Entry?) -> Bool {
@@ -1057,15 +1155,20 @@ private struct AgentTranscript: View {
 
 private struct AgentTranscriptScroll<Content: View>: View {
     let viewportHeight: CGFloat
+    @Binding var followsBottom: Bool
+    @Binding var pendingAnchorID: String?
     @ViewBuilder let content: () -> Content
-    @State private var followsBottom = true
     @State private var contentFrame = CGRect.zero
 
     private static var end: String { "agent-transcript-end" }
 
     var body: some View {
         ScrollViewReader { reader in
-            let jump = { reader.scrollTo(Self.end, anchor: .bottom) }
+            let jump = {
+                pendingAnchorID = nil
+                followsBottom = true
+                reader.scrollTo(Self.end, anchor: .bottom)
+            }
             ScrollView {
                 VStack(spacing: 0) {
                     content()
@@ -1076,10 +1179,20 @@ private struct AgentTranscriptScroll<Content: View>: View {
                 } action: { frame in
                     let previous = contentFrame
                     contentFrame = frame
+                    if let anchorID = pendingAnchorID {
+                        if frame.height != previous.height {
+                            pendingAnchorID = nil
+                            reader.scrollTo(anchorID, anchor: .top)
+                            return
+                        }
+                        if frame.minY != previous.minY {
+                            pendingAnchorID = nil
+                        }
+                    }
                     if frame.height == previous.height {
                         followsBottom = frame.maxY <= viewportHeight + 24
                     } else if followsBottom {
-                        jump()
+                        reader.scrollTo(Self.end, anchor: .bottom)
                     }
                 }
             }

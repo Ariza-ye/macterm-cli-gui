@@ -540,6 +540,40 @@
         }
       }
     },
+    "%lld earlier items hidden" : {
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld earlier item hidden"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld earlier items hidden"
+                }
+              }
+            }
+          }
+        },
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이전 항목 %lld개 숨김"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已隐藏 %lld 条更早记录"
+          }
+        }
+      }
+    },
     "%lld lines" : {
       "localizations" : {
         "ko" : {
@@ -5469,6 +5503,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "载入 Ghostty 的默认配置文件"
+          }
+        }
+      }
+    },
+    "Load More" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "더 불러오기"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "加载更多"
           }
         }
       }
