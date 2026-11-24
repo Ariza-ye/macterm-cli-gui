@@ -1,0 +1,315 @@
+name: Release macOS DMG
+
+# Manual release workflow that builds two separate macOS DMG installers
+# (Apple Silicon arm64 and Intel x86_64) in parallel jobs and publishes them to
+# this repository's GitHub Releases.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version without leading "v" (e.g. 1.35.0 or 1.35.0-beta.1)'
+        required: true
+        type: string
+      tag:
+        description: 'Optional Git tag name (defaults to v<version>)'
+        required: false
+        default: ''
+        type: string
+      prerelease:
+        description: 'Mark the GitHub release as a prerelease'
+        required: false
+        default: false
+        type: boolean
+      draft:
+        description: 'Create the GitHub release as a draft'
+        required: false
+        default: false
+        type: boolean
+      release_notes:
+        description: 'Optional release notes (leave empty to auto-generate)'
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.tag || inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Prepare Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      INPUT_VERSION: ${{ inputs.version }}
+      INPUT_TAG: ${{ inputs.tag }}
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      tag: ${{ steps.meta.outputs.tag }}
+      server_key: ${{ steps.server.outputs.key }}
+      zig_version: ${{ steps.server.outputs.zig }}
+      server_found: ${{ steps.prebuilt.outputs.found }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Validate Version and Tag
+        id: meta
+        run: |
+          VERSION="${INPUT_VERSION#v}"
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "error: invalid version '$INPUT_VERSION' (expected X.Y.Z or X.Y.Z-suffix)" >&2
+            exit 1
+          fi
+          TAG="${INPUT_TAG:-v${VERSION}}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Resolved release version: $VERSION (tag: $TAG)"
+
+      - name: Resolve Server Build Key
+        id: server
+        run: |
+          key="$(scripts/build-server.sh key)"
+          zig="$(scripts/build-server.sh zig-version)"
+          echo "key=$key" >> "$GITHUB_OUTPUT"
+          echo "zig=$zig" >> "$GITHUB_OUTPUT"
+          echo "Server key: $key (Zig $zig)"
+
+      # Check this repository's server-prebuilt release first, then fall back to
+      # upstream macterm/macterm. If neither has this key, the build-server job
+      # compiles it from source on macos-26 with Xcode 26.3.
+      - name: Download Prebuilt Server
+        id: prebuilt
+        env:
+          KEY: ${{ steps.server.outputs.key }}
+        run: |
+          found=false
+          for repo in "$GITHUB_REPOSITORY" "macterm/macterm"; do
+            rm -rf build/server
+            mkdir -p build/server
+            if gh release download "server-prebuilt" --repo "$repo" \
+                --dir build/server --pattern "macterm-$KEY-*" 2>/dev/null &&
+              scripts/build-server.sh verify build/server "$KEY"; then
+              echo "Found verified prebuilt server $KEY in $repo"
+              found=true
+              break
+            fi
+          done
+          if [[ "$found" != true ]]; then
+            rm -rf build/server
+            echo "No prebuilt server found for $KEY; will build from source."
+          fi
+          echo "found=$found" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Prebuilt Server Artifact
+        if: steps.prebuilt.outputs.found == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: server
+          path: build/server/
+          if-no-files-found: error
+          retention-days: 1
+
+  build-server:
+    name: Build Bundled Server
+    needs: prepare
+    if: needs.prepare.outputs.server_found != 'true'
+    runs-on: macos-26
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      KEY: ${{ needs.prepare.outputs.server_key }}
+    steps:
+      - uses: actions/checkout@v7
+
+      # Zig cannot link with Xcode 26.4 or later (zig#31658).
+      - name: Select Xcode 26.3
+        uses: ./.github/actions/select-xcode
+        with:
+          version: '26.3'
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ needs.prepare.outputs.zig_version }}
+
+      - name: Build Server Binaries
+        run: |
+          test "$(scripts/build-server.sh key)" = "$KEY"
+          scripts/build-server.sh build build/server
+
+      - name: Upload Built Server Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: server
+          path: build/server/
+          if-no-files-found: error
+          retention-days: 1
+
+  build-dmg:
+    name: Build DMG (${{ matrix.label }})
+    needs: [prepare, build-server]
+    if: >-
+      !failure() && !cancelled()
+      && needs.prepare.result == 'success'
+      && (needs.build-server.result == 'success' || needs.build-server.result == 'skipped')
+    runs-on: xcode-27
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            label: Apple Silicon / arm64
+          - arch: x86_64
+            label: Intel / x86_64
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      HAS_SIGNING_CERT: ${{ secrets.MACTERM_SIGNING_CERT_P12 != '' && secrets.MACTERM_SIGNING_CERT_PASSWORD != '' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: App Setup
+        uses: ./.github/actions/app-setup
+        with:
+          server-artifact: server
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Import Signing Certificate
+        if: env.HAS_SIGNING_CERT == 'true'
+        uses: ./.github/actions/import-signing-cert
+        with:
+          certificate-p12: ${{ secrets.MACTERM_SIGNING_CERT_P12 }}
+          certificate-password: ${{ secrets.MACTERM_SIGNING_CERT_PASSWORD }}
+
+      - name: Warn on Ad-hoc Signing
+        if: env.HAS_SIGNING_CERT != 'true'
+        run: |
+          echo "::warning::MACTERM_SIGNING_CERT_P12 / MACTERM_SIGNING_CERT_PASSWORD not configured; building with ad-hoc signature."
+
+      - name: Build ${{ matrix.label }} DMG
+        env:
+          ARCH: ${{ matrix.arch }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          SPARKLE_ED_PUBLIC_KEY: ${{ secrets.SPARKLE_ED_PUBLIC_KEY }}
+        run: |
+          if [[ -z "$SPARKLE_ED_PUBLIC_KEY" ]]; then
+            unset SPARKLE_ED_PUBLIC_KEY
+          fi
+          ./scripts/build.sh
+
+      - name: Verify Bundle and DMG
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          APP="build/export/Macterm.app"
+          DMG="build/Macterm-${VERSION}-${ARCH}.dmg"
+          codesign --verify --deep --strict "$APP"
+          lipo -info "$APP/Contents/MacOS/Macterm"
+          lipo -info "$APP/Contents/Resources/bin/macterm"
+          test -f "$DMG"
+          ls -lh "$DMG"
+
+      - name: Upload DMG Artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: dmg-${{ matrix.arch }}
+          path: build/Macterm-${{ needs.prepare.outputs.version }}-${{ matrix.arch }}.dmg
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Publish GitHub Release
+    needs: [prepare, build-dmg]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      VERSION: ${{ needs.prepare.outputs.version }}
+      TAG: ${{ needs.prepare.outputs.tag }}
+      PRERELEASE: ${{ inputs.prerelease }}
+      DRAFT: ${{ inputs.draft }}
+      RELEASE_NOTES: ${{ inputs.release_notes }}
+    steps:
+      - name: Download DMG Artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: dmg-*
+          path: dist
+          merge-multiple: true
+
+      - name: Verify Artifacts and Generate Checksums
+        run: |
+          ARM64_DMG="dist/Macterm-${VERSION}-arm64.dmg"
+          X86_64_DMG="dist/Macterm-${VERSION}-x86_64.dmg"
+          test -f "$ARM64_DMG"
+          test -f "$X86_64_DMG"
+          (cd dist && sha256sum "Macterm-${VERSION}-arm64.dmg" "Macterm-${VERSION}-x86_64.dmg" > SHA256SUMS.txt)
+          cat dist/SHA256SUMS.txt
+
+      - name: Create or Update GitHub Release
+        run: |
+          ASSETS=(
+            "dist/Macterm-${VERSION}-arm64.dmg"
+            "dist/Macterm-${VERSION}-x86_64.dmg"
+            "dist/SHA256SUMS.txt"
+          )
+
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" --repo "$GITHUB_REPOSITORY" "${ASSETS[@]}" --clobber
+            EDIT_ARGS=(
+              --draft="$DRAFT"
+              --prerelease="$PRERELEASE"
+            )
+            if [[ -n "$RELEASE_NOTES" ]]; then
+              EDIT_ARGS+=(--notes "$RELEASE_NOTES")
+            fi
+            gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" "${EDIT_ARGS[@]}"
+          else
+            CREATE_ARGS=(
+              --repo "$GITHUB_REPOSITORY"
+              --target "$GITHUB_SHA"
+              --title "$TAG"
+            )
+            if [[ "$DRAFT" == "true" ]]; then
+              CREATE_ARGS+=(--draft)
+            fi
+            if [[ "$PRERELEASE" == "true" ]]; then
+              CREATE_ARGS+=(--prerelease)
+            fi
+            if [[ -n "$RELEASE_NOTES" ]]; then
+              CREATE_ARGS+=(--notes "$RELEASE_NOTES")
+            else
+              CREATE_ARGS+=(--generate-notes)
+            fi
+            gh release create "$TAG" "${ASSETS[@]}" "${CREATE_ARGS[@]}"
+          fi
+
+      - name: Write Release Summary
+        run: |
+          {
+            echo "## Published Release \`${TAG}\`"
+            echo ""
+            echo "- **Version**: \`${VERSION}\`"
+            echo "- **Tag**: \`${TAG}\`"
+            echo "- **Draft**: \`${DRAFT}\`"
+            echo "- **Prerelease**: \`${PRERELEASE}\`"
+            echo ""
+            echo "### SHA-256 Checksums"
+            echo '```'
+            cat dist/SHA256SUMS.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

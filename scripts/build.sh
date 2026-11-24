@@ -39,7 +39,25 @@ SIGNING_OVERRIDES=()
 if [[ -n "$CODESIGN_IDENTITY" ]]; then
   SIGNING_OVERRIDES+=(CODE_SIGN_IDENTITY="$CODESIGN_IDENTITY")
 fi
-DMG_NAME="Macterm-${VERSION}.dmg"
+
+# Target architecture for Macterm and MactermCLI: universal (default), arm64,
+# or x86_64. MactermIconRenderer keeps its own arm64 ARCHS in project.yml, so
+# passing MACTERM_ARCHS scopes the override to the app and CLI targets only.
+ARCH="${ARCH:-universal}"
+ARCH_OVERRIDES=()
+case "$ARCH" in
+  universal)
+    DMG_NAME="Macterm-${VERSION}.dmg"
+    ;;
+  arm64 | x86_64)
+    ARCH_OVERRIDES+=(MACTERM_ARCHS="$ARCH")
+    DMG_NAME="Macterm-${VERSION}-${ARCH}.dmg"
+    ;;
+  *)
+    echo "ERROR: unsupported ARCH '$ARCH' (expected universal, arm64, or x86_64)" >&2
+    exit 1
+    ;;
+esac
 DERIVED_DATA="$BUILD_DIR/DerivedData"
 ARCHIVE_PATH="$BUILD_DIR/Macterm.xcarchive"
 EXPORT_PATH="$BUILD_DIR/export"
@@ -70,6 +88,7 @@ xcodebuild \
   GIT_COMMIT="$GIT_COMMIT" \
   MACTERM_UPDATE_CHANNEL="$MACTERM_UPDATE_CHANNEL" \
   SPARKLE_ED_PUBLIC_KEY="$SPARKLE_ED_PUBLIC_KEY" \
+  ${ARCH_OVERRIDES[@]+"${ARCH_OVERRIDES[@]}"} \
   ${SIGNING_OVERRIDES[@]+"${SIGNING_OVERRIDES[@]}"} \
   archive \
   | (xcbeautify --quiet 2>/dev/null || cat)
@@ -175,6 +194,20 @@ if [[ -n "$CODESIGN_IDENTITY" ]] && grep -q "Signature=adhoc" <<<"$ICON_RENDERER
   echo "ERROR: $ICON_RENDERER has an ad-hoc signature, but MACTERM_CODESIGN_IDENTITY is set" >&2
   exit 1
 fi
+
+# Verify that the app and CLI binaries match the requested architecture.
+for binary in "$APP_BUNDLE/Contents/MacOS/Macterm" "$APP_BUNDLE/Contents/Resources/bin/macterm"; do
+  actual_archs="$(lipo -archs "$binary")"
+  if [[ "$ARCH" == "universal" ]]; then
+    if [[ " $actual_archs " != *" arm64 "* || " $actual_archs " != *" x86_64 "* ]]; then
+      echo "ERROR: $binary is not universal (got: $actual_archs)" >&2
+      exit 1
+    fi
+  elif [[ "$actual_archs" != "$ARCH" ]]; then
+    echo "ERROR: $binary does not match requested ARCH=$ARCH (got: $actual_archs)" >&2
+    exit 1
+  fi
+done
 
 # Package into a compressed DMG with an Applications symlink for drag-install.
 DMG_STAGING="$BUILD_DIR/dmg-staging"

@@ -21,6 +21,7 @@ settings:
     SWIFT_VERSION: "6.0"
     SDKROOT: macosx
     MACOSX_DEPLOYMENT_TARGET: "14.0"
+    MACTERM_ARCHS: "$(ARCHS_STANDARD)"
     ONLY_ACTIVE_ARCH: NO
     SWIFT_STRICT_CONCURRENCY: complete
     DEAD_CODE_STRIPPING: YES
@@ -91,6 +92,7 @@ targets:
         type: file
     settings:
       base:
+        ARCHS: "$(MACTERM_ARCHS)"
         PRODUCT_BUNDLE_IDENTIFIER: com.thdxg.macterm
         PRODUCT_NAME: Macterm
         # Pinned so the Swift module stays `Macterm` even where PRODUCT_NAME
@@ -262,6 +264,7 @@ targets:
         product: ArgumentParser
     settings:
       base:
+        ARCHS: "$(MACTERM_ARCHS)"
         PRODUCT_NAME: macterm
         # The binary is `macterm` but the MODULE must not collide with the
         # app's `Macterm` module (case-insensitive .swiftmodule paths in the
