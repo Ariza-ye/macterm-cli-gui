@@ -122,14 +122,28 @@ final class TerminalTab: Identifiable {
     }
 
     /// The AI-agent logo for this tab's sidebar row: the focused pane's
-    /// running agent, else the first pane running one. nil when no pane has
-    /// an agent in the foreground (the user's chosen tab icon shows instead).
+    /// running agent, else the first pane running one. A live bridge in
+    /// `AgentRegistry` takes precedence over process-table matching. nil when
+    /// no pane has an agent in the foreground (the user's chosen tab icon shows
+    /// instead).
     var agentIcon: AgentIcon? {
-        if let icon = focusedPane?.agentIcon { return icon }
+        agentIcon(registry: .shared)
+    }
+
+    func agentIcon(registry: AgentRegistry) -> AgentIcon? {
+        if let focused = focusedPane, let icon = Self.paneAgentIcon(focused, registry: registry) {
+            return icon
+        }
         for pane in splitRoot.allPanes() {
-            if let icon = pane.agentIcon { return icon }
+            if let icon = Self.paneAgentIcon(pane, registry: registry) {
+                return icon
+            }
         }
         return nil
+    }
+
+    private static func paneAgentIcon(_ pane: Pane, registry: AgentRegistry) -> AgentIcon? {
+        registry.bridge(for: pane)?.provider.icon ?? pane.agentIcon
     }
 
     /// The tab's status dot. Running comes from the panes' run state. Done

@@ -158,6 +158,23 @@ struct ProcessInspectorTests {
     }
 
     @Test
+    func invokedName_unwraps_macterm_acp_bridge_target() {
+        let bridge = "/Applications/Macterm.app/Contents/Resources/integrations/macterm-acp"
+        #expect(ProcessInspector.invokedName(argv: ["node", bridge, "agy"]) == "agy")
+        #expect(ProcessInspector.invokedName(argv: ["node", bridge, "agy", "--conversation", "abc"]) == "agy")
+        #expect(ProcessInspector.invokedName(argv: ["node", bridge, "--conversation", "abc", "opencode"]) == "opencode")
+        #expect(ProcessInspector.invokedName(
+            argv: ["node", bridge, "--name", "Custom", "--", "/opt/homebrew/bin/claude", "acp"]
+        ) == "claude")
+        #expect(ProcessInspector.invokedName(
+            argv: ["node", bridge, "--", "node", "/opt/gemini/bin/gemini.js", "--acp"]
+        ) == "gemini")
+        #expect(ProcessInspector.invokedName(argv: [bridge, "agy"]) == "agy")
+        #expect(ProcessInspector.invokedName(argv: ["node", bridge, "--help"]) == "macterm-acp")
+        #expect(ProcessInspector.invokedName(argv: ["node", bridge, "--", bridge, "agy"]) == "macterm-acp")
+    }
+
+    @Test
     func remoteInvokedNames_offers_each_end_of_a_spaced_script_path() {
         // `ps -o args=` loses argv's quoting, so a script path with a space
         // can't be split back out; every possible end is offered, shortest

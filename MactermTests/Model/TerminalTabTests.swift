@@ -735,4 +735,48 @@ struct TerminalTabTests {
         try #require(tab.splitRoot.allPanes().first).applyForegroundRefresh(name: "zsh", foregroundPID: 1)
         #expect(tab.agentIcon == nil)
     }
+
+    @Test
+    func tab_agentIcon_prefers_registered_agent_bridge() throws {
+        let registry = AgentRegistry()
+        let tab = TerminalTab(projectPath: "/", projectID: UUID())
+        let pane = try #require(tab.splitRoot.allPanes().first)
+        // Foreground process alone does not match an agent (e.g. a custom ACP wrapper).
+        pane.applyForegroundRefresh(name: "node", foregroundPID: 1, argv0: { "custom-wrapper" })
+        #expect(tab.agentIcon(registry: registry) == nil)
+
+        let bridge = AgentBridge(
+            provider: .antigravity,
+            path: "/tmp/macterm-agy-test01/bridge.sock",
+            conversation: "conv-1",
+            token: UUID(),
+            windowID: nil,
+            registry: registry
+        )
+        registry.bind(bridge, toSession: pane.sessionName)
+        defer { registry.disconnect(pane: pane) }
+
+        #expect(tab.agentIcon(registry: registry) == .antigravity)
+    }
+
+    @Test
+    func tab_agentIcon_falls_back_to_process_icon_when_bridge_provider_has_no_icon() throws {
+        let registry = AgentRegistry()
+        let tab = TerminalTab(projectPath: "/", projectID: UUID())
+        let pane = try #require(tab.splitRoot.allPanes().first)
+        pane.applyForegroundRefresh(name: "node", foregroundPID: 1, argv0: { "opencode" })
+
+        let bridge = AgentBridge(
+            provider: .custom("My Custom Agent"),
+            path: "/tmp/macterm-agent-test02/bridge.sock",
+            conversation: "conv-2",
+            token: UUID(),
+            windowID: nil,
+            registry: registry
+        )
+        registry.bind(bridge, toSession: pane.sessionName)
+        defer { registry.disconnect(pane: pane) }
+
+        #expect(tab.agentIcon(registry: registry) == .opencode)
+    }
 }

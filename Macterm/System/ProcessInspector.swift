@@ -192,8 +192,14 @@ enum ProcessInspector {
     /// Testable core of `invokedNameBasename`: argv[0]'s basename (login-shell
     /// `-` stripped) — or, when argv[0] is an interpreter (`node …/bin/pi`),
     /// the script's basename from argv[1] with a script extension stripped,
-    /// so an npm-installed CLI still yields its command name.
+    /// so an npm-installed CLI still yields its command name. When the script
+    /// is Macterm's `macterm-acp` bridge wrapper, resolves the underlying preset
+    /// or command after `--`.
     static func invokedName(argv args: [String]) -> String? {
+        invokedName(argv: args, allowACPUnwrap: true)
+    }
+
+    private static func invokedName(argv args: [String], allowACPUnwrap: Bool) -> String? {
         guard var first = args.first, !first.isEmpty else { return nil }
         if first.hasPrefix("-") { first.removeFirst() }
         let name = (first as NSString).lastPathComponent
@@ -201,12 +207,45 @@ enum ProcessInspector {
             let script = (args[1] as NSString).lastPathComponent
             guard !script.isEmpty, !script.hasPrefix("-") else { return name }
             let ns = script as NSString
-            return scriptExtensions.contains(ns.pathExtension.lowercased())
+            let resolved = scriptExtensions.contains(ns.pathExtension.lowercased())
                 ? ns.deletingPathExtension
                 : script
+            if allowACPUnwrap, resolved == acpBridgeScriptName {
+                return acpBridgeTargetName(args: Array(args.dropFirst(2))) ?? resolved
+            }
+            return resolved
+        }
+        if allowACPUnwrap, name == acpBridgeScriptName {
+            return acpBridgeTargetName(args: Array(args.dropFirst())) ?? name
         }
         return name
     }
+
+    /// Extracts the underlying agent name from `macterm-acp` arguments: either
+    /// the preset name (`macterm-acp agy`) or the command after `--`
+    /// (`macterm-acp --name … -- opencode acp`).
+    private static func acpBridgeTargetName(args: [String]) -> String? {
+        var index = 0
+        var preset: String?
+        while index < args.count {
+            let arg = args[index]
+            if arg == "--" {
+                let commandArgs = Array(args.dropFirst(index + 1))
+                return commandArgs.isEmpty ? nil : invokedName(argv: commandArgs, allowACPUnwrap: false)
+            }
+            if arg == "--conversation" || arg == "--name" || arg == "--prompt" {
+                index += 2
+                continue
+            }
+            if !arg.hasPrefix("-"), preset == nil {
+                preset = arg
+            }
+            index += 1
+        }
+        return preset
+    }
+
+    private static let acpBridgeScriptName = "macterm-acp"
 
     /// The names a remote foreground may have been invoked as, from its
     /// `ps -o args=` line — the remote stand-in for `invokedName(argv:)`.
