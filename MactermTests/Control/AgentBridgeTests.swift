@@ -383,6 +383,15 @@ struct AgentBridgeTests {
             ]
           },
           {
+            "id": "session_mode",
+            "name": "Session Mode",
+            "currentValue": "build",
+            "options": [
+              { "value": "build", "name": "Build" },
+              { "value": "plan", "name": "Plan" }
+            ]
+          },
+          {
             "id": "custom_flag",
             "name": "Custom",
             "category": "future_unknown_category",
@@ -394,14 +403,16 @@ struct AgentBridgeTests {
         ]
         """
         let decoded = try JSONDecoder().decode([AgentBridge.ConfigOption].self, from: Data(json.utf8))
-        #expect(decoded.count == 4)
+        #expect(decoded.count == 5)
         #expect(decoded[0].effectiveCategory == .model)
         #expect(decoded[0].currentDisplayName == "Gemini 4 Neon")
         #expect(decoded[1].effectiveCategory == .thoughtLevel)
         #expect(decoded[1].currentDisplayName == "High")
         #expect(decoded[2].effectiveCategory == .speed)
         #expect(decoded[2].currentDisplayName == "Fast")
-        #expect(decoded[3].effectiveCategory == .other)
+        #expect(decoded[3].effectiveCategory == .mode)
+        #expect(decoded[3].currentDisplayName == "Build")
+        #expect(decoded[4].effectiveCategory == .other)
     }
 
     @Test
@@ -474,9 +485,44 @@ struct AgentBridgeTests {
         try writeFrame(["type": "snapshotEnd", "busy": false, "waiting": false, "configOptions": initialConfig], to: peerFD)
 
         try await waitUntil { bridge.isReady && bridge.modelOption?.currentValue == "gemini-4-neon" }
+        #expect(bridge.modeOption?.id == "mode")
+        #expect(bridge.modeOption?.currentValue == "default")
         #expect(bridge.speedOptions.count == 1)
         #expect(bridge.speedOptions[0].id == "thought_level")
         #expect(bridge.speedOptions[0].currentValue == "high")
+
+        // Cycle mode advances to next option and wraps around.
+        bridge.cycleMode(from: surface)
+        #expect(bridge.pendingConfigID == "mode")
+        let setModeLine = try await readLine(from: peerFD)
+        let setMode = try #require(JSONSerialization.jsonObject(with: Data(setModeLine.utf8)) as? [String: Any])
+        #expect(setMode["type"] as? String == "setConfig")
+        #expect(setMode["configId"] as? String == "mode")
+        #expect(setMode["value"] as? String == "plan")
+        let modeReqID = try #require(setMode["id"] as? String)
+
+        var modeUpdatedConfig = initialConfig
+        modeUpdatedConfig[2]["currentValue"] = "plan"
+        try writeFrame([
+            "type": "configReply",
+            "id": modeReqID,
+            "accepted": true,
+            "configOptions": modeUpdatedConfig,
+        ], to: peerFD)
+        try await waitUntil { bridge.pendingConfigID == nil && bridge.modeOption?.currentValue == "plan" }
+
+        bridge.cycleMode(from: surface)
+        let wrapModeLine = try await readLine(from: peerFD)
+        let wrapMode = try #require(JSONSerialization.jsonObject(with: Data(wrapModeLine.utf8)) as? [String: Any])
+        #expect(wrapMode["value"] as? String == "default")
+        let wrapModeReqID = try #require(wrapMode["id"] as? String)
+        try writeFrame([
+            "type": "configReply",
+            "id": wrapModeReqID,
+            "accepted": true,
+            "configOptions": initialConfig,
+        ], to: peerFD)
+        try await waitUntil { bridge.pendingConfigID == nil && bridge.modeOption?.currentValue == "default" }
 
         // Switch thinking level (speed)
         bridge.setConfig("thought_level", value: "low", from: surface)

@@ -120,7 +120,9 @@ final class AgentBridge {
                  "fast",
                  "service_tier",
                  "model_speed": return .speed
-            case "mode": return .mode
+            case "mode",
+                 "session_mode",
+                 "agent_mode": return .mode
             default: return category ?? .other
             }
         }
@@ -224,6 +226,10 @@ final class AgentBridge {
     var displayRows: [Row] {
         guard let optimisticUserRow else { return rows }
         return rows + [optimisticUserRow]
+    }
+
+    var modeOption: ConfigOption? {
+        configOptions.first { $0.effectiveCategory == .mode && !$0.options.isEmpty }
     }
 
     var modelOption: ConfigOption? {
@@ -391,6 +397,13 @@ final class AgentBridge {
             guard !Task.isCancelled, let self, pendingSend == id else { return }
             failPendingSend()
         }
+    }
+
+    func cycleMode(from surface: PaneSurface) {
+        guard let mode = modeOption, mode.options.count > 1 else { return }
+        let currentIndex = mode.options.firstIndex { $0.value == mode.currentValue } ?? -1
+        let next = mode.options[(currentIndex + 1) % mode.options.count]
+        setConfig(mode.id, value: next.value, from: surface)
     }
 
     func setConfig(_ configID: String, value: String, from surface: PaneSurface) {

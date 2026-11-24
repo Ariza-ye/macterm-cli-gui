@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 @testable import Macterm
 import Testing
 
@@ -106,6 +107,57 @@ struct AgentComposerTests {
         defer { _ = window }
         #expect(!input.showsPlaceholder)
         #expect(try !hasVisiblePixels(in: input, rect: input.bounds))
+    }
+
+    @Test
+    func shiftTabCyclesModeWithoutInsertingTab() throws {
+        let (window, input) = try makeInput()
+        defer { _ = window }
+        var cycleCount = 0
+        input.onCycleMode = { cycleCount += 1 }
+
+        let shiftTab = try #require(NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [.shift],
+            timestamp: 0,
+            windowNumber: window.windowNumber,
+            context: nil,
+            characters: "\u{19}",
+            charactersIgnoringModifiers: "\t",
+            isARepeat: false,
+            keyCode: UInt16(kVK_Tab)
+        ))
+
+        input.keyDown(with: shiftTab)
+        #expect(cycleCount == 1)
+        #expect(input.string.isEmpty)
+
+        // Ignored during IME composition.
+        input.setMarkedText(
+            "ni",
+            selectedRange: NSRange(location: 2, length: 0),
+            replacementRange: NSRange(location: NSNotFound, length: 0)
+        )
+        input.keyDown(with: shiftTab)
+        #expect(cycleCount == 1)
+        input.unmarkText()
+
+        // Plain Tab does not cycle mode.
+        let plainTab = try #require(NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: window.windowNumber,
+            context: nil,
+            characters: "\t",
+            charactersIgnoringModifiers: "\t",
+            isARepeat: false,
+            keyCode: UInt16(kVK_Tab)
+        ))
+        input.keyDown(with: plainTab)
+        #expect(cycleCount == 1)
     }
 
     @Test

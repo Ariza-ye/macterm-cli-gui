@@ -161,7 +161,10 @@ struct AgentPaneView: View {
                 maxHeight: maxEditorHeight,
                 submit: { bridge.submit(from: surface) },
                 canPaste: { pasteboard in canPasteAttachment(from: pasteboard) },
-                onPaste: { pasteboard in handlePaste(pasteboard) }
+                onPaste: { pasteboard in handlePaste(pasteboard) },
+                onCycleMode: (bridge.modeOption?.options.count ?? 0) > 1
+                    ? { bridge.cycleMode(from: surface) }
+                    : nil
             )
             if hasComposerStatus {
                 composerStatus
@@ -253,7 +256,7 @@ struct AgentPaneView: View {
     }
 
     private var hasComposerControls: Bool {
-        bridge.modelOption != nil || !bridge.speedOptions.isEmpty
+        bridge.modeOption != nil || bridge.modelOption != nil || !bridge.speedOptions.isEmpty
     }
 
     private var hasComposerStatus: Bool {
@@ -268,6 +271,15 @@ struct AgentPaneView: View {
 
     @ViewBuilder
     private var composerControls: some View {
+        if let mode = bridge.modeOption {
+            AgentConfigControl(
+                option: mode,
+                isPending: bridge.pendingConfigID == mode.id,
+                isDisabled: !canStartAction || mode.options.count <= 1,
+                allowsTruncation: false,
+                onSelect: { bridge.setConfig(mode.id, value: $0, from: surface) }
+            )
+        }
         if let model = bridge.modelOption {
             AgentConfigControl(
                 option: model,
@@ -460,18 +472,40 @@ private struct AgentConfigControl: View {
         .disabled(isDisabled)
         .opacity(isDisabled && !isPending ? 0.6 : 1)
         .pointingHandCursor(!isDisabled)
-        .help(Text(verbatim: option.name))
+        .help(Text(verbatim: helpText))
         .accessibilityLabel(Text(verbatim: option.name))
         .accessibilityValue(Text(verbatim: option.currentDisplayName))
     }
 
+    private var helpText: String {
+        if let description = option.options.first(where: { $0.value == option.currentValue })?.description,
+           !description.isEmpty
+        {
+            return "\(option.name) — \(description)"
+        }
+        return option.name
+    }
+
     private var iconName: String {
         switch option.effectiveCategory {
-        case .model: "cpu"
-        case .thoughtLevel: "gauge.with.dots.needle.67percent"
+        case .model:
+            "cpu"
+        case .thoughtLevel:
+            "gauge.with.dots.needle.67percent"
         case .speed,
-             .modelConfig: "bolt"
-        default: "slider.horizontal.3"
+             .modelConfig:
+            "bolt"
+        case .mode:
+            switch option.currentValue.lowercased() {
+            case "plan": "list.bullet.clipboard"
+            case "auto": "sparkles"
+            case "accept-edits",
+                 "edit",
+                 "build": "pencil"
+            default: "switch.2"
+            }
+        default:
+            "slider.horizontal.3"
         }
     }
 
@@ -1303,6 +1337,7 @@ struct AgentComposer: NSViewRepresentable {
     let submit: () -> Void
     let canPaste: (NSPasteboard) -> Bool
     let onPaste: (NSPasteboard) -> Bool
+    var onCycleMode: (() -> Void)?
 
     private static let inset = NSSize(width: 12, height: 8)
 
@@ -1311,6 +1346,7 @@ struct AgentComposer: NSViewRepresentable {
         var submit: (() -> Void)?
         var canPaste: ((NSPasteboard) -> Bool)?
         var onPaste: ((NSPasteboard) -> Bool)?
+        var onCycleMode: (() -> Void)?
         var pasteboardProvider: () -> NSPasteboard = { .general }
 
         var placeholder = "" {
@@ -1369,6 +1405,10 @@ struct AgentComposer: NSViewRepresentable {
 
         override func keyDown(with event: NSEvent) {
             let modifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
+            if event.keyCode == kVK_Tab, modifiers == .shift, !hasMarkedText(), let onCycleMode {
+                if !event.isARepeat { onCycleMode() }
+                return
+            }
             guard event.keyCode == kVK_Return || event.keyCode == kVK_ANSI_KeypadEnter,
                   !hasMarkedText(), modifiers.isEmpty
             else {
@@ -1484,6 +1524,7 @@ struct AgentComposer: NSViewRepresentable {
         input.submit = submit
         input.canPaste = canPaste
         input.onPaste = onPaste
+        input.onCycleMode = onCycleMode
         input.placeholder = placeholder
         input.placeholderColor = MactermTheme.nsFgMuted
         if input.font != font {

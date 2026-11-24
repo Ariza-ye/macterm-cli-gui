@@ -1,4 +1,11 @@
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type {
+    BeforeAgentStartEvent,
+    BeforeAgentStartEventResult,
+    ExtensionAPI,
+    ExtensionContext,
+    ToolCallEvent,
+    ToolCallEventResult,
+} from "@earendil-works/pi-coding-agent";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmdirSync, statSync, unlinkSync } from "node:fs";
 import { createConnection, createServer, type Socket } from "node:net";
@@ -27,18 +34,28 @@ type Row = {
     status?: "running" | "completed" | "failed";
     attachments?: Attachment[];
 };
+type PiMode = "edit" | "plan";
 type ConfigChoice = {
     value: string;
     name: string;
+    description?: string;
     group?: string;
 };
 type ConfigOption = {
     id: string;
     name: string;
-    category: "model" | "thought_level";
+    category: "model" | "thought_level" | "mode";
     currentValue: string;
     options: ConfigChoice[];
 };
+
+const READ_ONLY_BUILTIN_TOOLS = new Set(["read", "grep", "find", "ls"]);
+const PLAN_MODE_SYSTEM_PROMPT = [
+    "",
+    "## Plan Mode (Read-Only)",
+    "You are currently in Plan mode. Inspect the codebase with read-only tools, clarify requirements, and present a clear step-by-step plan.",
+    "Do not edit files, create files, or run shell commands until the user switches back to Edit mode.",
+].join("\n");
 
 const THINKING_LEVELS: readonly ThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
 const THINKING_LABELS: Record<string, string> = {
@@ -256,7 +273,11 @@ export default function (pi: ExtensionAPI) {
     });
     pi.on("session_shutdown", () => { runtime?.close(); runtime = undefined; });
     pi.on("session_tree", () => { runtime?.snapshot(); });
-    pi.on("before_agent_start", () => { runtime?.status(); });
+    pi.on("before_agent_start", (event) => {
+        runtime?.status();
+        return runtime?.beforeAgentStart(event);
+    });
+    pi.on("tool_call", (event) => runtime?.onToolCall(event));
     pi.on("agent_start", () => { runtime?.acceptSend(); runtime?.status(); });
     pi.on("agent_settled", () => { runtime?.status(); });
     pi.on("ui_prompt_start", () => { runtime?.setWaiting(true); });
@@ -299,14 +320,66 @@ function startBridge(
     let waiting = false;
     let closed = false;
     let messageID = 0;
+    let currentMode: PiMode = "edit";
+    let savedActiveTools: string[] | undefined;
     const connected = new Set<Socket>();
     const activeMessages = new Map<string, string>();
     const toolArguments = new Map<string, string>();
     const modelsByKey = new Map<string, PiModel>();
 
     const state = () => ({ busy: !ctx.isIdle(), waiting });
+
+    function isReadOnlyTool(toolName: string): boolean {
+        if (READ_ONLY_BUILTIN_TOOLS.has(toolName)) return true;
+        if (typeof pi.getAllTools === "function") {
+            const info = pi.getAllTools().find((tool) => tool.name === toolName);
+            if (info?.annotations?.readOnlyHint === true) return true;
+        }
+        return false;
+    }
+
+    function applyMode(nextMode: PiMode) {
+        if (nextMode === currentMode) return;
+        if (nextMode === "plan") {
+            if (typeof pi.getActiveTools === "function" && typeof pi.setActiveTools === "function") {
+                if (savedActiveTools === undefined) {
+                    savedActiveTools = pi.getActiveTools();
+                }
+                pi.setActiveTools(savedActiveTools.filter(isReadOnlyTool));
+            }
+            currentMode = "plan";
+            ctx.ui?.setStatus?.("macterm-mode", "Plan");
+        } else {
+            if (savedActiveTools !== undefined && typeof pi.setActiveTools === "function") {
+                pi.setActiveTools(savedActiveTools);
+                savedActiveTools = undefined;
+            }
+            currentMode = "edit";
+            ctx.ui?.setStatus?.("macterm-mode", undefined);
+        }
+    }
+
     function buildConfigOptions(): ConfigOption[] {
-        const result: ConfigOption[] = [];
+        const result: ConfigOption[] = [
+            {
+                id: "mode",
+                name: "Mode",
+                category: "mode",
+                currentValue: currentMode,
+                options: [
+                    {
+                        value: "edit",
+                        name: "Edit",
+                        description: "Full tool access for editing files and running commands.",
+                    },
+                    {
+                        value: "plan",
+                        name: "Plan",
+                        description: "Read-only exploration and planning before making changes.",
+                    },
+                ],
+            },
+        ];
         modelsByKey.clear();
         const sourceModels = ctx.scopedModels.length > 0
             ? ctx.scopedModels.map((entry) => entry.model)
@@ -478,6 +551,13 @@ function startBridge(
                         }
                         pi.setThinkingLevel(command.value as ThinkingLevel);
                         replyConfig(true);
+                    } else if (command.configId === "mode") {
+                        if (command.value !== "edit" && command.value !== "plan") {
+                            replyConfig(false);
+                            continue;
+                        }
+                        applyMode(command.value);
+                        replyConfig(true);
                     } else {
                         replyConfig(false);
                     }
@@ -570,6 +650,9 @@ function startBridge(
     function close() {
         if (closed) return;
         closed = true;
+        if (currentMode === "plan") {
+            applyMode("edit");
+        }
         clearInterval(timer);
         if (pending) {
             clearTimeout(pending.timer);
@@ -593,6 +676,17 @@ function startBridge(
         acceptSend: () => sendReply(true),
         rejectNewConversation: () => sendNewConversationReply(false),
         setWaiting(value: boolean) { waiting = value; status(); },
+        beforeAgentStart(event: BeforeAgentStartEvent): BeforeAgentStartEventResult | undefined {
+            if (currentMode !== "plan") return undefined;
+            return { systemPrompt: `${event.systemPrompt}${PLAN_MODE_SYSTEM_PROMPT}` };
+        },
+        onToolCall(event: ToolCallEvent): ToolCallEventResult | undefined {
+            if (currentMode !== "plan" || isReadOnlyTool(event.toolName)) return undefined;
+            return {
+                block: true,
+                reason: "Blocked in Plan mode. Switch to Edit mode before editing files or running commands.",
+            };
+        },
         message(message: Message, phase: "start" | "update" | "end") {
             if (message.role !== "user" && message.role !== "assistant") return;
             let id = activeMessages.get(message.role);

@@ -182,6 +182,8 @@ function inferConfigCategory(id, category) {
         case "model_speed":
             return "speed";
         case "mode":
+        case "session_mode":
+        case "agent_mode":
             return "mode";
         default:
             return undefined;
@@ -216,9 +218,41 @@ function flattenSelectOptions(rawOptions) {
     return choices;
 }
 
-export function normalizeConfigOptions(rawConfigOptions, rawModels) {
+function normalizeLegacyModes(rawModes) {
+    if (!rawModes || !Array.isArray(rawModes.availableModes) || rawModes.availableModes.length === 0) {
+        return undefined;
+    }
+    const seen = new Set();
+    const options = [];
+    for (const mode of rawModes.availableModes) {
+        const value = mode?.id ?? mode?.modeId;
+        if (typeof value !== "string" || !value || seen.has(value)) continue;
+        seen.add(value);
+        const choice = { value, name: clean(mode.name || value) };
+        if (typeof mode.description === "string" && mode.description.trim()) {
+            choice.description = clean(mode.description).slice(0, 256);
+        }
+        options.push(choice);
+    }
+    if (options.length === 0) return undefined;
+    const currentValue = typeof rawModes.currentModeId === "string"
+        && options.some(choice => choice.value === rawModes.currentModeId)
+        ? rawModes.currentModeId
+        : options[0].value;
+    return {
+        id: "mode",
+        name: "Mode",
+        category: "mode",
+        currentValue,
+        options,
+    };
+}
+
+export function normalizeConfigOptions(rawConfigOptions, rawModels, rawModes) {
     const booleanIds = new Set();
     const normalized = [];
+    let usesLegacyModels = false;
+    let usesLegacyModes = false;
 
     if (Array.isArray(rawConfigOptions) && rawConfigOptions.length > 0) {
         for (const item of rawConfigOptions) {
@@ -251,10 +285,7 @@ export function normalizeConfigOptions(rawConfigOptions, rawModels) {
                 options,
             });
         }
-        return { configOptions: normalized, usesLegacyModels: false, booleanIds };
-    }
-
-    if (rawModels && Array.isArray(rawModels.availableModels) && rawModels.availableModels.length > 0) {
+    } else if (rawModels && Array.isArray(rawModels.availableModels) && rawModels.availableModels.length > 0) {
         const seen = new Set();
         const options = [];
         for (const model of rawModels.availableModels) {
@@ -278,11 +309,19 @@ export function normalizeConfigOptions(rawConfigOptions, rawModels) {
                 currentValue,
                 options,
             });
-            return { configOptions: normalized, usesLegacyModels: true, booleanIds };
+            usesLegacyModels = true;
         }
     }
 
-    return { configOptions: [], usesLegacyModels: false, booleanIds };
+    if (!normalized.some(item => item.category === "mode")) {
+        const legacyMode = normalizeLegacyModes(rawModes);
+        if (legacyMode) {
+            normalized.push(legacyMode);
+            usesLegacyModes = true;
+        }
+    }
+
+    return { configOptions: normalized, usesLegacyModels, usesLegacyModes, booleanIds };
 }
 
 export function formatToolText(update, previous) {
@@ -472,6 +511,7 @@ export async function runAcpBridge(config, runtime = {}) {
     let closed = false;
     let configOptions = [];
     let usesLegacyModels = false;
+    let usesLegacyModes = false;
     let booleanConfigIds = new Set();
     let promptCapabilities = {};
     let configPending = false;
@@ -480,18 +520,31 @@ export async function runAcpBridge(config, runtime = {}) {
     const writeOut = text => outputStream.write(text);
     const writeErr = text => errorStream.write(text);
 
-    function applySessionConfig(rawConfigOptions, rawModels) {
-        const next = normalizeConfigOptions(rawConfigOptions, rawModels);
+    function applySessionConfig(rawConfigOptions, rawModels, rawModes) {
+        const next = normalizeConfigOptions(rawConfigOptions, rawModels, rawModes);
         configOptions = next.configOptions;
         usesLegacyModels = next.usesLegacyModels;
+        usesLegacyModes = next.usesLegacyModes;
+        booleanConfigIds = next.booleanIds;
+    }
+
+    function mergeUpdatedConfigOptions(rawConfigOptions) {
+        const next = normalizeConfigOptions(rawConfigOptions, undefined, undefined);
+        const hasNativeMode = next.configOptions.some(item => item.category === "mode");
+        let merged = next.configOptions;
+        if (hasNativeMode) {
+            usesLegacyModes = false;
+        } else if (usesLegacyModes) {
+            const existingMode = configOptions.find(item => item.category === "mode");
+            if (existingMode) merged = [...merged, existingMode];
+        }
+        configOptions = merged;
+        usesLegacyModels = false;
         booleanConfigIds = next.booleanIds;
     }
 
     function updateConfigOptions(rawConfigOptions) {
-        const next = normalizeConfigOptions(rawConfigOptions, undefined);
-        configOptions = next.configOptions;
-        usesLegacyModels = false;
-        booleanConfigIds = next.booleanIds;
+        mergeUpdatedConfigOptions(rawConfigOptions);
         emit({ type: "config", configOptions });
     }
 
@@ -603,6 +656,19 @@ export async function runAcpBridge(config, runtime = {}) {
                 option.id === "model" ? { ...option, currentValue: update.modelId } : option,
             );
             emit({ type: "config", configOptions });
+        } else if (type === "current_mode_update" && typeof update.currentModeId === "string") {
+            const nextMode = update.currentModeId;
+            let changed = false;
+            configOptions = configOptions.map(option => {
+                if (option.category === "mode"
+                    && option.currentValue !== nextMode
+                    && option.options.some(choice => choice.value === nextMode)) {
+                    changed = true;
+                    return { ...option, currentValue: nextMode };
+                }
+                return option;
+            });
+            if (changed) emit({ type: "config", configOptions });
         }
     }
 
@@ -770,6 +836,11 @@ export async function runAcpBridge(config, runtime = {}) {
                 configOptions = configOptions.map(item =>
                     item.id === configId ? { ...item, currentValue: value } : item,
                 );
+            } else if (usesLegacyModes && configId === "mode") {
+                await request("session/set_mode", { sessionId: sessionID, modeId: value });
+                configOptions = configOptions.map(item =>
+                    item.id === configId ? { ...item, currentValue: value } : item,
+                );
             } else {
                 const wireValue = booleanConfigIds.has(configId) ? value === "true" : value;
                 const result = await request("session/set_config_option", {
@@ -778,9 +849,7 @@ export async function runAcpBridge(config, runtime = {}) {
                     value: wireValue,
                 });
                 if (Array.isArray(result?.configOptions)) {
-                    const next = normalizeConfigOptions(result.configOptions, undefined);
-                    configOptions = next.configOptions;
-                    booleanConfigIds = next.booleanIds;
+                    mergeUpdatedConfigOptions(result.configOptions);
                 } else {
                     configOptions = configOptions.map(item =>
                         item.id === configId ? { ...item, currentValue: value } : item,
@@ -822,7 +891,7 @@ export async function runAcpBridge(config, runtime = {}) {
             sessionID = nextSessionID;
             rows.clear();
             message = undefined;
-            applySessionConfig(sessionResult?.configOptions, sessionResult?.models);
+            applySessionConfig(sessionResult?.configOptions, sessionResult?.models, sessionResult?.modes);
             if (!closed) {
                 writeOut(`\n${config.name} conversation: ${clean(sessionID)}\n`);
                 if (!permissions.size) terminal.prompt();
@@ -1003,7 +1072,7 @@ export async function runAcpBridge(config, runtime = {}) {
             sessionID = sessionResult?.sessionId;
         }
         if (!sessionID) throw new Error(`${config.name} did not provide a conversation ID.`);
-        applySessionConfig(sessionResult?.configOptions, sessionResult?.models);
+        applySessionConfig(sessionResult?.configOptions, sessionResult?.models, sessionResult?.modes);
         clearTimeout(startup);
         message = undefined;
         writeOut(`\n${config.name} conversation: ${clean(sessionID)}\n`);
