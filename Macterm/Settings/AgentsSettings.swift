@@ -4,6 +4,7 @@ import SwiftUI
 /// Settings → Agents: controls Agent GUI appearance, automatic terminal command
 /// interception, and built-in/custom interception rules.
 struct AgentsSettings: View {
+    private var agentSettings: AgentSettings { .shared }
     private var store: AgentInterceptStore { .shared }
     private var appearanceSettings: AgentAppearanceSettings { .shared }
 
@@ -13,6 +14,7 @@ struct AgentsSettings: View {
 
     var body: some View {
         let appearance = appearanceSettings.appearance
+        let guiEnabled = agentSettings.guiEnabled
         Form {
             Section {
                 SettingsInfoBlock(symbol: "bubble.left.and.text.bubble.right") {
@@ -26,57 +28,72 @@ struct AgentsSettings: View {
             }
 
             Section {
-                Picker("Font", selection: fontFamilyBinding) {
-                    Text("System Default").tag("")
-                    let families = fontCatalog.bodyFamilies(including: appearance.fontFamily)
-                    if !families.isEmpty {
-                        Divider()
-                        ForEach(families, id: \.self) { family in
-                            Text(verbatim: family).tag(family)
+                Toggle(isOn: guiEnabledBinding) {
+                    Text("Enable Agent GUI")
+                    Text(String(localized: """
+                    Show supported coding agents in Macterm's native interface. When off, open Agent GUI panes \
+                    return to the terminal and command interception pauses.
+                    """))
+                    .settingsDescription()
+                }
+            }
+
+            Section {
+                Group {
+                    Picker("Font", selection: fontFamilyBinding) {
+                        Text("System Default").tag("")
+                        let families = fontCatalog.bodyFamilies(including: appearance.fontFamily)
+                        if !families.isEmpty {
+                            Divider()
+                            ForEach(families, id: \.self) { family in
+                                Text(verbatim: family).tag(family)
+                            }
                         }
                     }
-                }
 
-                Picker("Code font", selection: codeFontFamilyBinding) {
-                    Text("System Monospaced").tag("")
-                    let sections = fontCatalog.codeFamilySections(including: appearance.codeFontFamily)
-                    if !sections.monospaced.isEmpty {
-                        Divider()
-                        ForEach(sections.monospaced, id: \.self) { family in
-                            Text(verbatim: family).tag(family)
+                    Picker("Code font", selection: codeFontFamilyBinding) {
+                        Text("System Monospaced").tag("")
+                        let sections = fontCatalog.codeFamilySections(including: appearance.codeFontFamily)
+                        if !sections.monospaced.isEmpty {
+                            Divider()
+                            ForEach(sections.monospaced, id: \.self) { family in
+                                Text(verbatim: family).tag(family)
+                            }
+                        }
+                        if !sections.other.isEmpty {
+                            Divider()
+                            ForEach(sections.other, id: \.self) { family in
+                                Text(verbatim: family).tag(family)
+                            }
                         }
                     }
-                    if !sections.other.isEmpty {
-                        Divider()
-                        ForEach(sections.other, id: \.self) { family in
-                            Text(verbatim: family).tag(family)
+
+                    AgentSettingsSlider(
+                        label: "Text size",
+                        value: fontSizeBinding,
+                        range: AgentAppearance.fontSizeRange,
+                        step: 1,
+                        display: { "\(Int($0.rounded())) pt" }
+                    )
+
+                    AgentSettingsSlider(
+                        label: "Line spacing",
+                        value: lineSpacingBinding,
+                        range: AgentAppearance.lineSpacingRange,
+                        step: 1,
+                        display: { "\(Int($0.rounded())) pt" }
+                    )
+
+                    Picker("Content width", selection: contentWidthBinding) {
+                        ForEach(AgentContentWidth.allCases) { width in
+                            Text(width.displayName).tag(width)
                         }
                     }
+
+                    AgentAppearancePreview(appearance: appearance)
+                        .opacity(guiEnabled ? 1 : 0.5)
                 }
-
-                AgentSettingsSlider(
-                    label: "Text size",
-                    value: fontSizeBinding,
-                    range: AgentAppearance.fontSizeRange,
-                    step: 1,
-                    display: { "\(Int($0.rounded())) pt" }
-                )
-
-                AgentSettingsSlider(
-                    label: "Line spacing",
-                    value: lineSpacingBinding,
-                    range: AgentAppearance.lineSpacingRange,
-                    step: 1,
-                    display: { "\(Int($0.rounded())) pt" }
-                )
-
-                Picker("Content width", selection: contentWidthBinding) {
-                    ForEach(AgentContentWidth.allCases) { width in
-                        Text(width.displayName).tag(width)
-                    }
-                }
-
-                AgentAppearancePreview(appearance: appearance)
+                .disabled(!guiEnabled)
 
                 Text("Changes apply immediately to open Agent GUI panes.")
                     .settingsSecondaryText()
@@ -92,18 +109,20 @@ struct AgentsSettings: View {
                         appearanceSettings.resetToDefaults()
                     }
                     .buttonStyle(.borderless)
-                    .disabled(appearanceSettings.isDefault)
+                    .disabled(!guiEnabled || appearanceSettings.isDefault)
                 }
             }
 
             Section {
                 Toggle(isOn: enabledBinding) {
                     Text("Intercept agent commands")
+                        .dimsWhenDisabled()
                     Text(String(localized: """
                     Applies to local zsh, bash, and fish panes. Set MACTERM_NO_AGENT_GUI=1 to run the terminal version instead.
                     """))
                     .settingsDescription()
                 }
+                .disabled(!guiEnabled)
             }
 
             Section {
@@ -117,7 +136,7 @@ struct AgentsSettings: View {
                         )
                     }
                 }
-                .disabled(!store.enabled)
+                .disabled(!guiEnabled || !store.enabled)
 
                 Text(String(localized: """
                 Changes take effect at the next prompt in open shells. Rules only intercept bare commands \
@@ -135,6 +154,7 @@ struct AgentsSettings: View {
                             .labelStyle(.iconOnly)
                     }
                     .buttonStyle(.borderless)
+                    .disabled(!guiEnabled)
                     .help("Add an interception rule")
                 }
             }
@@ -163,6 +183,13 @@ struct AgentsSettings: View {
         } message: {
             Text("Macterm stops intercepting “\(pendingRemoval?.command ?? "")” at the next shell prompt.")
         }
+    }
+
+    private var guiEnabledBinding: Binding<Bool> {
+        Binding(
+            get: { agentSettings.guiEnabled },
+            set: { agentSettings.guiEnabled = $0 }
+        )
     }
 
     private var enabledBinding: Binding<Bool> {

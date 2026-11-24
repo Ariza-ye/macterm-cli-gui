@@ -35,4 +35,12 @@ final class AgentRegistry {
     func disconnect(session sessionName: String) {
         bridges[sessionName]?.close()
     }
+
+    func disconnectAll() {
+        let active = Array(bridges.values)
+        bridges.removeAll()
+        for bridge in active {
+            bridge.close()
+        }
+    }
 }

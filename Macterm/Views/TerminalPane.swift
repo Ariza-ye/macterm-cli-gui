@@ -30,7 +30,8 @@ struct TerminalPane: View {
         // This window's view of the pane: its own search, copy mode and
         // read-only state, its own view, its own client of the session.
         let surface = SurfaceRegistry.shared.surface(for: pane, in: host)
-        let agent = host.windowID == nil ? nil : AgentRegistry.shared.bridge(for: pane)
+        let guiEnabled = AgentSettings.shared.guiEnabled
+        let agent = (host.windowID == nil || !guiEnabled) ? nil : AgentRegistry.shared.bridge(for: pane)
         let showsAgent = host.windowID.map { agent?.showsGUI(in: $0) == true } ?? false
         // The search bar sits above the terminal surface in a VStack, so showing
         // it pushes the terminal content down rather than overlaying it.

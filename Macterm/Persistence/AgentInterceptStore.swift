@@ -403,14 +403,17 @@ final class AgentInterceptStore {
     private(set) var config: AgentInterceptConfig
     private let directory: URL
     private let configURL: URL
+    private let agentSettings: AgentSettings
 
     var enabled: Bool { config.enabled }
+    var effectiveEnabled: Bool { agentSettings.guiEnabled && config.enabled }
     var rules: [AgentInterceptRule] { config.rules }
 
-    init(directory: URL? = nil) {
+    init(directory: URL? = nil, agentSettings: AgentSettings = .shared) {
         let base = directory ?? FileStorage.appSupportDirectory()
         self.directory = base
         configURL = base.appendingPathComponent("agent-intercept.json")
+        self.agentSettings = agentSettings
         config = Self.loadConfig(from: configURL)
     }
 
@@ -543,9 +546,11 @@ final class AgentInterceptStore {
             logger.error("failed to create app support directory: \(EnglishErrorText.describe(error), privacy: .public)")
             return
         }
+        var effectiveConfig = config
+        effectiveConfig.enabled = effectiveEnabled
         let revision = UUID().uuidString
         for shell in AgentInterceptShellGenerator.Shell.allCases {
-            let content = AgentInterceptShellGenerator.generate(config: config, shell: shell, revision: revision)
+            let content = AgentInterceptShellGenerator.generate(config: effectiveConfig, shell: shell, revision: revision)
             let url = directory.appendingPathComponent(shell.filename)
             do {
                 try Data(content.utf8).write(to: url, options: .atomic)

@@ -226,6 +226,129 @@ struct AgentBridgeTests {
         #expect(registry.bridge(for: pane)?.provider == .opencode)
     }
 
+    @Test
+    func agent_settings_defaults_and_persistence_round_trip() {
+        let defaults = IsolatedDefaults.make()
+        let settings = AgentSettings(defaults: defaults)
+        #expect(settings.guiEnabled)
+
+        var observed: [Bool] = []
+        settings.onGUIEnabledChanged = { observed.append($0) }
+        settings.guiEnabled = false
+        settings.guiEnabled = false
+        settings.guiEnabled = true
+        #expect(observed == [false, true])
+
+        settings.guiEnabled = false
+        let reloaded = AgentSettings(defaults: defaults)
+        #expect(!reloaded.guiEnabled)
+    }
+
+    @Test
+    func agent_register_rejects_when_gui_is_disabled() throws {
+        let appState = makeAppState()
+        let projectStore = ProjectStore(fileURL: FileManager.default.temporaryDirectory
+            .appendingPathComponent("macterm-agent-disabled-store-\(UUID().uuidString).json"))
+        let pane = try seedPane(appState, projectStore)
+        let registry = AgentRegistry()
+        let handler = AgentRegistrationHandler(
+            appState: appState,
+            registry: registry,
+            isGUIEnabled: { false }
+        )
+        let (socketPath, cleanup) = try makeBridgeSocket(prefix: "agent")
+        defer {
+            registry.disconnectAll()
+            cleanup()
+        }
+
+        let response = handler.handle(AgentRegistrationRequest(
+            session: pane.sessionName,
+            provider: "opencode",
+            conversation: "conv-disabled",
+            socket: socketPath,
+            token: UUID()
+        ))
+        #expect(!response.ok)
+        #expect(response.error?.code == "disabled")
+        #expect(registry.bridge(for: pane) == nil)
+    }
+
+    @Test
+    func agent_runtime_toggles_socket_connections_and_intercept_scripts() async throws {
+        let appState = makeAppState()
+        let projectStore = ProjectStore(fileURL: FileManager.default.temporaryDirectory
+            .appendingPathComponent("macterm-agent-runtime-store-\(UUID().uuidString).json"))
+        let pane = try seedPane(appState, projectStore)
+        let (bridgeSocketPath, cleanupBridge) = try makeBridgeSocket(prefix: "agent")
+        let serverDir = "/tmp/macterm-runtime-test-\(UUID().uuidString.prefix(8))"
+        let serverSocketPath = "\(serverDir)/agent.sock"
+        let interceptDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("macterm-runtime-intercept-\(UUID().uuidString)", isDirectory: true)
+        let defaults = IsolatedDefaults.make()
+        let settings = AgentSettings(defaults: defaults)
+        let registry = AgentRegistry()
+        let server = AgentRegistrationServer(socketPath: serverSocketPath)
+        let interceptStore = AgentInterceptStore(directory: interceptDir, agentSettings: settings)
+        let runtime = AgentRuntime(
+            server: server,
+            registry: registry,
+            settings: settings,
+            interceptStore: interceptStore
+        )
+        defer {
+            runtime.stop()
+            registry.disconnectAll()
+            try? FileManager.default.removeItem(atPath: serverDir)
+            try? FileManager.default.removeItem(at: interceptDir)
+            cleanupBridge()
+        }
+
+        runtime.attach(appState: appState)
+        runtime.start()
+        #expect(FileManager.default.fileExists(atPath: serverSocketPath))
+
+        let payload = try JSONSerialization.data(withJSONObject: [
+            "v": 1,
+            "id": UUID().uuidString,
+            "command": "agent.register",
+            "args": [
+                "session": pane.sessionName,
+                "agentBridge": [
+                    "provider": "opencode",
+                    "conversation": "conv-runtime",
+                    "socket": bridgeSocketPath,
+                    "token": UUID().uuidString,
+                ],
+            ],
+        ])
+        let firstReply = try await JSONDecoder().decode(
+            AgentRegistrationResponse.self,
+            from: sendUnixLine(payload, to: serverSocketPath)
+        )
+        #expect(firstReply.ok)
+        #expect(registry.bridge(for: pane)?.provider == .opencode)
+
+        // Turning Agent GUI off stops the socket, disconnects active bridges, and clears shell wrappers.
+        settings.guiEnabled = false
+        #expect(!FileManager.default.fileExists(atPath: serverSocketPath))
+        #expect(registry.bridge(for: pane) == nil)
+        let disabledZsh = try String(contentsOf: interceptDir.appendingPathComponent("agent-intercept.zsh"), encoding: .utf8)
+        #expect(!disabledZsh.contains("agy() {"))
+
+        // Turning Agent GUI back on restarts the socket, accepts registrations, and restores wrappers.
+        settings.guiEnabled = true
+        #expect(FileManager.default.fileExists(atPath: serverSocketPath))
+        let enabledZsh = try String(contentsOf: interceptDir.appendingPathComponent("agent-intercept.zsh"), encoding: .utf8)
+        #expect(enabledZsh.contains("agy() {"))
+        let secondReply = try await JSONDecoder().decode(
+            AgentRegistrationResponse.self,
+            from: sendUnixLine(payload, to: serverSocketPath)
+        )
+        #expect(secondReply.ok)
+        #expect(registry.bridge(for: pane)?.provider == .opencode)
+    }
+
     // MARK: - Model & speed configuration
 
     @Test

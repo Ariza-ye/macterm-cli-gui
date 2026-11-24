@@ -107,10 +107,16 @@ struct AgentRegistrationResponse: Codable, Equatable {
 final class AgentRegistrationHandler {
     private let appState: AppState
     private let registry: AgentRegistry
+    private let isGUIEnabled: () -> Bool
 
-    init(appState: AppState, registry: AgentRegistry = .shared) {
+    init(
+        appState: AppState,
+        registry: AgentRegistry = .shared,
+        isGUIEnabled: @escaping () -> Bool = { AgentSettings.shared.guiEnabled }
+    ) {
         self.appState = appState
         self.registry = registry
+        self.isGUIEnabled = isGUIEnabled
     }
 
     func handle(_ raw: Data) -> Data {
@@ -124,6 +130,12 @@ final class AgentRegistrationHandler {
     }
 
     func handle(_ request: AgentRegistrationRequest) -> AgentRegistrationResponse {
+        guard isGUIEnabled() else {
+            return .failure(
+                code: "disabled",
+                message: "Agent GUI is disabled."
+            )
+        }
         let resolvedProvider: AgentBridge.Provider? = switch request.legacyCommand {
         case "pi.register":
             .pi
@@ -421,8 +433,23 @@ final class AgentRegistrationServer: @unchecked Sendable {
 final class AgentRuntime {
     static let shared = AgentRuntime()
 
-    private let server = AgentRegistrationServer()
+    private let server: AgentRegistrationServer
+    private let registry: AgentRegistry
+    private let settings: AgentSettings
+    private let interceptStore: AgentInterceptStore
     private var handler: AgentRegistrationHandler?
+
+    init(
+        server: AgentRegistrationServer = AgentRegistrationServer(),
+        registry: AgentRegistry = .shared,
+        settings: AgentSettings = .shared,
+        interceptStore: AgentInterceptStore = .shared
+    ) {
+        self.server = server
+        self.registry = registry
+        self.settings = settings
+        self.interceptStore = interceptStore
+    }
 
     static func configureEnvironment() {
         setenv(AgentProtocol.socketEnvVar, AgentRegistrationServer.defaultSocketPath(), 1)
@@ -434,9 +461,21 @@ final class AgentRuntime {
     }
 
     func start() {
-        server.start()
-        AgentInterceptStore.shared.syncShellScripts()
+        settings.onGUIEnabledChanged = { [weak self] enabled in
+            self?.applyGUIEnabled(enabled)
+        }
+        applyGUIEnabled(settings.guiEnabled)
         Self.syncInstalledPiExtension()
+    }
+
+    func applyGUIEnabled(_ enabled: Bool) {
+        if enabled {
+            server.start()
+        } else {
+            server.stop()
+            registry.disconnectAll()
+        }
+        interceptStore.syncShellScripts()
     }
 
     /// Keeps an already-installed `~/.pi/agent/extensions/macterm-pi-bridge.ts` in sync with the
@@ -461,12 +500,18 @@ final class AgentRuntime {
     }
 
     func attach(appState: AppState) {
-        let registrationHandler = AgentRegistrationHandler(appState: appState)
+        let settings = self.settings
+        let registrationHandler = AgentRegistrationHandler(
+            appState: appState,
+            registry: registry,
+            isGUIEnabled: { settings.guiEnabled }
+        )
         handler = registrationHandler
         server.attach { raw in registrationHandler.handle(raw) }
     }
 
     func stop() {
+        settings.onGUIEnabledChanged = nil
         server.stop()
     }
 }

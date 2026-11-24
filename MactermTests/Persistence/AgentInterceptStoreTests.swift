@@ -92,6 +92,38 @@ struct AgentInterceptStoreTests {
         #expect(!disabledZsh.contains("my-agent() {"))
     }
 
+    @Test
+    func guiTogglePausesAndResumesShellInterceptionWithoutChangingSavedConfig() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("macterm-intercept-gui-toggle-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let defaults = IsolatedDefaults.make()
+        let settings = AgentSettings(defaults: defaults)
+        let store = AgentInterceptStore(directory: dir, agentSettings: settings)
+
+        store.syncShellScripts()
+        #expect(store.enabled)
+        #expect(store.effectiveEnabled)
+        let initialZsh = try String(contentsOf: dir.appendingPathComponent("agent-intercept.zsh"), encoding: .utf8)
+        #expect(initialZsh.contains("agy() {"))
+
+        settings.guiEnabled = false
+        store.syncShellScripts()
+        #expect(store.enabled)
+        #expect(!store.effectiveEnabled)
+        let pausedZsh = try String(contentsOf: dir.appendingPathComponent("agent-intercept.zsh"), encoding: .utf8)
+        #expect(pausedZsh.contains("unfunction"))
+        #expect(!pausedZsh.contains("agy() {"))
+
+        settings.guiEnabled = true
+        store.syncShellScripts()
+        #expect(store.enabled)
+        #expect(store.effectiveEnabled)
+        let resumedZsh = try String(contentsOf: dir.appendingPathComponent("agent-intercept.zsh"), encoding: .utf8)
+        #expect(resumedZsh.contains("agy() {"))
+    }
+
     private func runSyntaxCheck(_ launchPath: String, args: [String]) throws -> Int32 {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: launchPath)

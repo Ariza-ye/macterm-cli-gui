@@ -3802,6 +3802,22 @@
         }
       }
     },
+    "Enable Agent GUI" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agent GUI 사용"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "启用 Agent GUI"
+          }
+        }
+      }
+    },
     "Enable Project Insights" : {
       "localizations" : {
         "ko" : {
@@ -10896,6 +10912,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "在智能体图标上显示旋转指示器"
+          }
+        }
+      }
+    },
+    "Show supported coding agents in Macterm's native interface. When off, open Agent GUI panes return to the terminal and command interception pauses." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "지원되는 코딩 에이전트를 Macterm 기본 인터페이스에서 표시합니다. 끄면 열려 있는 Agent GUI 페인이 터미널로 돌아가고 명령 가로채기가 일시 중지됩니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在 Macterm 原生界面中显示受支持的智能体。关闭后，已打开的 Agent GUI 窗格会切回终端，并暂停命令拦截。"
           }
         }
       }
