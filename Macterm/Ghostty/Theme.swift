@@ -25,7 +25,9 @@ enum MactermTheme {
     @MainActor
     static var fg: Color { Color(nsColor: nsFg) }
     @MainActor
-    static var fgMuted: Color { fgAlpha(0.65) }
+    static var fgMuted: Color { Color(nsColor: nsFgMuted) }
+    @MainActor
+    static var nsFgMuted: NSColor { nsFg.withAlphaComponent(0.65) }
     @MainActor
     static var fgDim: Color { fgAlpha(0.4) }
     @MainActor

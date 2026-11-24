@@ -150,27 +150,17 @@ struct AgentPaneView: View {
                     }
                 )
             }
-            ZStack(alignment: .topLeading) {
-                if bridge.draft.isEmpty {
-                    Text("Write a message…")
-                        .font(appearance.bodyFont())
-                        .foregroundStyle(MactermTheme.fgMuted)
-                        .padding(.horizontal, 12)
-                        .padding(.top, 8)
-                        .allowsHitTesting(false)
-                        .accessibilityHidden(true)
-                }
-                AgentComposer(
-                    text: $bridge.draft,
-                    focus: focus,
-                    isEditable: !surface.isReadOnly,
-                    font: appearance.bodyNSFont(),
-                    minHeight: appearance.composerMinHeight,
-                    maxHeight: maxEditorHeight,
-                    submit: { bridge.submit(from: surface) },
-                    onPaste: { pasteboard in handlePaste(pasteboard) }
-                )
-            }
+            AgentComposer(
+                text: $bridge.draft,
+                placeholder: String(localized: "Write a message…"),
+                focus: focus,
+                isEditable: !surface.isReadOnly,
+                font: appearance.bodyNSFont(),
+                minHeight: appearance.composerMinHeight,
+                maxHeight: maxEditorHeight,
+                submit: { bridge.submit(from: surface) },
+                onPaste: { pasteboard in handlePaste(pasteboard) }
+            )
             if hasComposerStatus {
                 composerStatus
                     .font(appearance.captionFont())
@@ -1183,8 +1173,9 @@ final class AgentPaneFocus {
 }
 
 /// A native multiline editor with an AppKit focus target for FocusRestoration.
-private struct AgentComposer: NSViewRepresentable {
+struct AgentComposer: NSViewRepresentable {
     @Binding var text: String
+    let placeholder: String
     let focus: AgentPaneFocus
     let isEditable: Bool
     let font: NSFont
@@ -1199,6 +1190,60 @@ private struct AgentComposer: NSViewRepresentable {
         weak var focus: AgentPaneFocus?
         var submit: (() -> Void)?
         var onPaste: ((NSPasteboard) -> Bool)?
+
+        var placeholder = "" {
+            didSet {
+                guard placeholder != oldValue else { return }
+                wasShowingPlaceholder = showsPlaceholder
+                needsDisplay = true
+            }
+        }
+
+        var placeholderColor: NSColor = .placeholderTextColor {
+            didSet {
+                guard placeholderColor != oldValue else { return }
+                if showsPlaceholder { needsDisplay = true }
+            }
+        }
+
+        private var wasShowingPlaceholder = false
+
+        var showsPlaceholder: Bool {
+            string.isEmpty && !hasMarkedText() && !placeholder.isEmpty
+        }
+
+        override var string: String {
+            didSet { syncPlaceholderDisplay() }
+        }
+
+        override func didChangeText() {
+            super.didChangeText()
+            syncPlaceholderDisplay()
+        }
+
+        override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+            super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
+            syncPlaceholderDisplay()
+        }
+
+        override func unmarkText() {
+            super.unmarkText()
+            syncPlaceholderDisplay()
+        }
+
+        override func insertText(_ string: Any, replacementRange: NSRange) {
+            super.insertText(string, replacementRange: replacementRange)
+            syncPlaceholderDisplay()
+        }
+
+        override func draw(_ dirtyRect: NSRect) {
+            let showing = showsPlaceholder
+            wasShowingPlaceholder = showing
+            if showing {
+                drawPlaceholder()
+            }
+            super.draw(dirtyRect)
+        }
 
         override func keyDown(with event: NSEvent) {
             let modifiers = event.modifierFlags.intersection([.command, .control, .option, .shift])
@@ -1223,6 +1268,36 @@ private struct AgentComposer: NSViewRepresentable {
             guard super.becomeFirstResponder() else { return false }
             focus?.onFocus?()
             return true
+        }
+
+        private func syncPlaceholderDisplay() {
+            let nowShowing = showsPlaceholder
+            guard nowShowing != wasShowingPlaceholder else { return }
+            wasShowingPlaceholder = nowShowing
+            needsDisplay = true
+        }
+
+        private func drawPlaceholder() {
+            let origin = textContainerOrigin
+            let padding = textContainer?.lineFragmentPadding ?? 0
+            let width = max(0, bounds.width - (origin.x + padding) * 2)
+            let height = max(0, bounds.height - origin.y * 2)
+            guard width > 0, height > 0 else { return }
+
+            let paragraphStyle = NSMutableParagraphStyle()
+            paragraphStyle.lineBreakMode = .byTruncatingTail
+            paragraphStyle.alignment = alignment
+
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: font ?? NSFont.systemFont(ofSize: NSFont.systemFontSize),
+                .foregroundColor: placeholderColor,
+                .paragraphStyle: paragraphStyle,
+            ]
+            let rect = NSRect(x: origin.x + padding, y: origin.y, width: width, height: height)
+            NSAttributedString(string: placeholder, attributes: attributes).draw(
+                with: rect,
+                options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine]
+            )
         }
     }
 
@@ -1253,6 +1328,8 @@ private struct AgentComposer: NSViewRepresentable {
         input.allowsUndo = true
         input.drawsBackground = false
         input.font = font
+        input.placeholder = placeholder
+        input.placeholderColor = MactermTheme.nsFgMuted
         input.textContainerInset = Self.inset
         input.textContainer?.lineFragmentPadding = 0
         scroll.hasVerticalScroller = false
@@ -1266,12 +1343,15 @@ private struct AgentComposer: NSViewRepresentable {
         input.isEditable = isEditable
         input.submit = submit
         input.onPaste = onPaste
+        input.placeholder = placeholder
+        input.placeholderColor = MactermTheme.nsFgMuted
         if input.font != font {
             input.font = font
             input.typingAttributes[.font] = font
             if let storage = input.textStorage, storage.length > 0 {
                 storage.addAttribute(.font, value: font, range: NSRange(location: 0, length: storage.length))
             }
+            if input.showsPlaceholder { input.needsDisplay = true }
         }
         input.textColor = MactermTheme.nsFg
         input.insertionPointColor = MactermTheme.nsFg
