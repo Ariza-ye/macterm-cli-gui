@@ -886,7 +886,7 @@ private struct AgentTranscript: View {
                 let currentEntries = entries
                 let lastEntry = currentEntries.last
                 AgentTranscriptScroll(viewportHeight: viewport.size.height) {
-                    LazyVStack(alignment: .leading, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 16) {
                         ForEach(currentEntries) { entry in
                             switch entry {
                             case let .message(row):
