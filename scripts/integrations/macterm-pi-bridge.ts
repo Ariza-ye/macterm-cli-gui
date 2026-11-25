@@ -1,10 +1,12 @@
-import type {
-    BeforeAgentStartEvent,
-    BeforeAgentStartEventResult,
-    ExtensionAPI,
-    ExtensionContext,
-    ToolCallEvent,
-    ToolCallEventResult,
+import {
+    SessionManager,
+    type BeforeAgentStartEvent,
+    type BeforeAgentStartEventResult,
+    type ExtensionAPI,
+    type ExtensionContext,
+    type SessionInfo,
+    type ToolCallEvent,
+    type ToolCallEventResult,
 } from "@earendil-works/pi-coding-agent";
 import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmdirSync, statSync, unlinkSync } from "node:fs";
@@ -254,6 +256,7 @@ function resolveRegistrationSocket(agentSocket: string | undefined, controlSocke
 
 export default function (pi: ExtensionAPI) {
     let runtime: ReturnType<typeof startBridge>;
+    let pendingResumePath: string | undefined;
     pi.registerCommand("macterm-new", {
         description: "Start a new conversation from Macterm",
         handler: async (_args, cmdCtx) => {
@@ -263,13 +266,35 @@ export default function (pi: ExtensionAPI) {
             }
         },
     });
+    pi.registerCommand("macterm-resume", {
+        description: "Resume a previous conversation from Macterm",
+        handler: async (_args, cmdCtx) => {
+            const targetPath = pendingResumePath;
+            pendingResumePath = undefined;
+            if (!targetPath) {
+                runtime?.rejectResumeSession();
+                return;
+            }
+            try {
+                const result = await cmdCtx.switchSession(targetPath);
+                if (result.cancelled) {
+                    runtime?.rejectResumeSession();
+                }
+            } catch {
+                runtime?.rejectResumeSession();
+            }
+        },
+    });
     pi.on("session_start", (_event, ctx) => {
         runtime?.close();
+        pendingResumePath = undefined;
         const session = process.env.MACTERM_SESSION;
         const agentSocket = process.env.MACTERM_AGENT_SOCKET;
         const controlSocket = process.env.MACTERM_SOCKET;
         runtime = ctx.mode === "tui" && process.platform === "darwin" && session && (agentSocket || controlSocket)
-            ? startBridge(pi, ctx, session, agentSocket, controlSocket) : undefined;
+            ? startBridge(pi, ctx, session, agentSocket, controlSocket, (targetPath) => {
+                pendingResumePath = targetPath;
+            }) : undefined;
     });
     pi.on("session_shutdown", () => { runtime?.close(); runtime = undefined; });
     pi.on("session_tree", () => { runtime?.snapshot(); });
@@ -304,11 +329,13 @@ function startBridge(
     session: string,
     agentSocket: string | undefined,
     controlSocket: string | undefined,
+    setPendingResumePath: (targetPath: string | undefined) => void,
 ) {
     let directory: string;
     try { directory = mkdtempSync("/tmp/macterm-pi-"); } catch { return; }
     const path = `${directory}/bridge.sock`;
     const conversation = ctx.sessionManager.getSessionId();
+    const canResume = typeof SessionManager?.list === "function";
     let peer: Socket | undefined;
     let registration: Socket | undefined;
     let token = "";
@@ -316,6 +343,7 @@ function startBridge(
     let registeringSocket: string | undefined;
     let pending: { id: string; timer: NodeJS.Timeout; owner: Socket } | undefined;
     let pendingNewConversation: { id: string; timer: NodeJS.Timeout; owner: Socket } | undefined;
+    let pendingResumeSession: { id: string; timer: NodeJS.Timeout; owner: Socket } | undefined;
     let configPending = false;
     let waiting = false;
     let closed = false;
@@ -326,6 +354,7 @@ function startBridge(
     const activeMessages = new Map<string, string>();
     const toolArguments = new Map<string, string>();
     const modelsByKey = new Map<string, PiModel>();
+    const sessionsById = new Map<string, string>();
     const activeCompletions = new Map<string, { controller: AbortController; owner: Socket }>();
 
     const state = () => ({ busy: !ctx.isIdle(), waiting });
@@ -454,6 +483,120 @@ function startBridge(
         pendingNewConversation = undefined;
         if (owner === peer) emit({ type: "newConversationReply", id, accepted, ...state() });
     }
+    function sendResumeSessionReply(accepted: boolean) {
+        if (!pendingResumeSession) return;
+        const { id, timer, owner } = pendingResumeSession;
+        clearTimeout(timer);
+        pendingResumeSession = undefined;
+        setPendingResumePath(undefined);
+        if (owner === peer) emit({ type: "resumeSessionReply", id, accepted, ...state() });
+    }
+    function normalizePiSession(info: SessionInfo) {
+        const rawTitle = stripVTControlCharacters(info.name || info.firstMessage || info.id)
+            .replace(/\s+/g, " ")
+            .trim();
+        const entry: {
+            id: string;
+            title: string;
+            updatedAt?: string;
+            cwd?: string;
+            messageCount?: number;
+        } = {
+            id: info.id,
+            title: (rawTitle || info.id).slice(0, 256),
+        };
+        if (info.modified instanceof Date && !Number.isNaN(info.modified.getTime())) {
+            entry.updatedAt = info.modified.toISOString();
+        }
+        if (typeof info.cwd === "string" && info.cwd.trim()) {
+            entry.cwd = stripVTControlCharacters(info.cwd).trim().slice(0, 1024);
+        }
+        if (typeof info.messageCount === "number" && Number.isFinite(info.messageCount) && info.messageCount >= 0) {
+            entry.messageCount = Math.floor(info.messageCount);
+        }
+        return entry;
+    }
+    async function listSessions(id: string, owner: Socket) {
+        const reply = (accepted: boolean, extra: Record<string, unknown> = {}) => {
+            if (owner === peer) emit({ type: "sessionsReply", id, accepted, ...extra });
+        };
+        if (closed || !canResume) {
+            reply(false, { error: "unsupported" });
+            return;
+        }
+        try {
+            const sessionDir = typeof ctx.sessionManager.getSessionDir === "function"
+                ? ctx.sessionManager.getSessionDir()
+                : undefined;
+            const list = await SessionManager.list(ctx.cwd, sessionDir);
+            list.sort((a, b) => (b.modified?.getTime?.() ?? 0) - (a.modified?.getTime?.() ?? 0));
+            sessionsById.clear();
+            const sessions = [];
+            const seen = new Set<string>();
+            for (const info of list) {
+                if (!info?.id || !info?.path || seen.has(info.id)) continue;
+                seen.add(info.id);
+                sessionsById.set(info.id, info.path);
+                sessions.push(normalizePiSession(info));
+            }
+            if (closed) return;
+            reply(true, { sessions });
+        } catch (error) {
+            if (!closed) {
+                const message = error instanceof Error ? error.message : "list_failed";
+                reply(false, { error: stripVTControlCharacters(message) });
+            }
+        }
+    }
+    async function startResumeSession(id: string, sessionId: string, owner: Socket) {
+        const replyImmediate = (accepted: boolean) => {
+            if (owner === peer) emit({ type: "resumeSessionReply", id, accepted, ...state() });
+        };
+        const target = sessionId.trim();
+        if (closed || !canResume || pending || configPending || pendingNewConversation
+            || pendingResumeSession || waiting || !ctx.isIdle()
+            || !target || target.length > 256) {
+            replyImmediate(false);
+            return;
+        }
+        if (target === conversation) {
+            replyImmediate(true);
+            return;
+        }
+        let targetPath = sessionsById.get(target);
+        if (!targetPath) {
+            try {
+                const sessionDir = typeof ctx.sessionManager.getSessionDir === "function"
+                    ? ctx.sessionManager.getSessionDir()
+                    : undefined;
+                const list = await SessionManager.list(ctx.cwd, sessionDir);
+                for (const info of list) {
+                    if (info?.id && info?.path) sessionsById.set(info.id, info.path);
+                }
+                targetPath = sessionsById.get(target);
+            } catch {
+                targetPath = undefined;
+            }
+        }
+        if (closed || !targetPath || pending || configPending || pendingNewConversation
+            || pendingResumeSession || waiting || !ctx.isIdle()) {
+            replyImmediate(false);
+            return;
+        }
+        pendingResumeSession = {
+            id,
+            owner,
+            timer: setTimeout(() => sendResumeSessionReply(false), 15000).unref(),
+        };
+        setPendingResumePath(targetPath);
+        try {
+            void Promise.resolve(
+                pi.sendUserMessage("/macterm-resume", { expandPromptTemplates: true }),
+            ).catch(() => sendResumeSessionReply(false));
+        } catch {
+            sendResumeSessionReply(false);
+        }
+    }
     function snapshot() {
         if (!peer) return;
         emit({ type: "snapshot", conversation });
@@ -462,7 +605,7 @@ function startBridge(
             const row = messageRow(`entry:${entry.id}`, entry.message);
             if (row) emit({ type: "row", row });
         }
-        emit({ type: "snapshotEnd", ...state(), configOptions: buildConfigOptions() });
+        emit({ type: "snapshotEnd", ...state(), configOptions: buildConfigOptions(), canResume });
     }
 
     function cancelCompletion(id: string) {
@@ -569,6 +712,7 @@ function startBridge(
             if (peer === socket) peer = undefined;
             if (pending?.owner === socket) sendReply(false);
             if (pendingNewConversation?.owner === socket) sendNewConversationReply(false);
+            if (pendingResumeSession?.owner === socket) sendResumeSessionReply(false);
         });
         let buffer = "";
         socket.on("data", (chunk: string) => {
@@ -586,6 +730,7 @@ function startBridge(
                     attachments?: unknown;
                     configId?: string;
                     value?: string;
+                    sessionId?: string;
                     instructions?: unknown;
                     prompt?: unknown;
                     maxTokens?: unknown;
@@ -621,7 +766,8 @@ function startBridge(
                             });
                         }
                     };
-                    if (pending || configPending || pendingNewConversation || waiting || !ctx.isIdle()
+                    if (pending || configPending || pendingNewConversation || pendingResumeSession
+                        || waiting || !ctx.isIdle()
                         || typeof command.configId !== "string" || typeof command.value !== "string") {
                         replyConfig(false);
                         continue;
@@ -663,7 +809,8 @@ function startBridge(
                         replyConfig(false);
                     }
                 } else if (command.type === "newConversation" && typeof command.id === "string") {
-                    if (pending || configPending || pendingNewConversation || waiting || !ctx.isIdle()) {
+                    if (pending || configPending || pendingNewConversation || pendingResumeSession
+                        || waiting || !ctx.isIdle()) {
                         emit({ type: "newConversationReply", id: command.id, accepted: false, ...state() });
                         continue;
                     }
@@ -679,6 +826,14 @@ function startBridge(
                     } catch {
                         sendNewConversationReply(false);
                     }
+                } else if (command.type === "listSessions" && typeof command.id === "string") {
+                    void listSessions(command.id, socket);
+                } else if (command.type === "resumeSession" && typeof command.id === "string") {
+                    if (typeof command.sessionId !== "string") {
+                        emit({ type: "resumeSessionReply", id: command.id, accepted: false, ...state() });
+                        continue;
+                    }
+                    void startResumeSession(command.id, command.sessionId, socket);
                 } else if (command.type === "complete" && typeof command.id === "string") {
                     void runCompletion(command, socket);
                 } else if (command.type === "cancelComplete" && typeof command.id === "string") {
@@ -687,7 +842,8 @@ function startBridge(
                     const text = typeof command.text === "string" ? command.text : "";
                     const normalized = normalizeAttachments(command.attachments);
                     const hasContent = Boolean(text.trim()) || normalized.attachments.length > 0;
-                    if (pending || configPending || pendingNewConversation || waiting || !ctx.isIdle()
+                    if (pending || configPending || pendingNewConversation || pendingResumeSession
+                        || waiting || !ctx.isIdle()
                         || !normalized.valid || !hasContent
                         || Buffer.byteLength(text) > 128 * 1024) {
                         emit({ type: "reply", id: command.id, accepted: false, ...state() });
@@ -768,6 +924,11 @@ function startBridge(
             clearTimeout(pendingNewConversation.timer);
             pendingNewConversation = undefined;
         }
+        if (pendingResumeSession) {
+            clearTimeout(pendingResumeSession.timer);
+            pendingResumeSession = undefined;
+        }
+        sessionsById.clear();
         registration?.destroy();
         for (const socket of connected) socket.destroy();
         server.close();
@@ -781,6 +942,7 @@ function startBridge(
         close, snapshot, status, config,
         acceptSend: () => sendReply(true),
         rejectNewConversation: () => sendNewConversationReply(false),
+        rejectResumeSession: () => sendResumeSessionReply(false),
         setWaiting(value: boolean) { waiting = value; status(); },
         beforeAgentStart(event: BeforeAgentStartEvent): BeforeAgentStartEventResult | undefined {
             if (currentMode !== "plan") return undefined;

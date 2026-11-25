@@ -28,6 +28,7 @@ For a test without installation, run `pi -e /path/to/macterm-pi-bridge.ts` in th
 - Use the mode, model, and speed controls below the input box to switch modes (or press <kbd>Shift</kbd>+<kbd>Tab</kbd>), models, or thinking levels when the agent supports them.
 - Approve or reject ACP permission requests directly in the permission card when they appear.
 - Click **Git Diff** to review changed files, select files to commit, generate a commit message, and push or pull.
+- Click **History** (or enter `/resume` in the input box) to browse and resume previous conversations when the agent supports session history.
 - Click **New Conversation** to start a new conversation in the same pane.
 - Click **Stop** to stop the current turn. The agent process stays open.
 - Click **Show Terminal** for password prompts, slash commands, and other terminal controls. Click **Show Agent GUI** in the pane's top-right corner to show the same conversation again.

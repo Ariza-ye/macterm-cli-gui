@@ -1278,6 +1278,149 @@ struct AgentBridgeTests {
         #expect(await disconnectTask.value == nil)
     }
 
+    // MARK: - Session history & resume
+
+    @Test
+    func list_and_resume_sessions_loads_paginated_history_and_replaces_transcript() async throws {
+        let (_, registry, appState, projectStore) = makeHandler()
+        let pane = try seedPane(appState, projectStore)
+        let windowID = UUID()
+        let surface = SurfaceRegistry.shared.surface(for: pane, in: .window(windowID))
+        defer {
+            registry.disconnect(pane: pane)
+            SurfaceRegistry.shared.destroySurfaces(of: pane)
+        }
+
+        let (socketPath, serverFD, cleanup) = try makeListeningBridgeSocket(prefix: "agent")
+        defer { cleanup() }
+
+        let token = UUID()
+        let bridge = AgentBridge(
+            provider: .antigravity,
+            path: socketPath,
+            conversation: "conv-1",
+            token: token,
+            windowID: windowID,
+            registry: registry
+        )
+        registry.bind(bridge, toSession: pane.sessionName)
+
+        let peerFD = try await acceptClient(on: serverFD)
+        defer { close(peerFD) }
+        _ = try await readLine(from: peerFD) // hello
+
+        try writeFrame(["type": "snapshot", "conversation": "conv-1"], to: peerFD)
+        try writeFrame([
+            "type": "row",
+            "row": ["id": "u1", "kind": "user", "text": "Current message"],
+        ], to: peerFD)
+        try writeFrame(["type": "snapshotEnd", "busy": false, "waiting": false, "canResume": true], to: peerFD)
+
+        try await waitUntil { bridge.isReady && bridge.canResume && bridge.rows.count == 1 }
+
+        // 1. Load initial page of sessions.
+        bridge.loadSessions(from: surface)
+        #expect(bridge.isLoadingSessions)
+
+        let listLine1 = try await readLine(from: peerFD)
+        let listReq1 = try #require(JSONSerialization.jsonObject(with: Data(listLine1.utf8)) as? [String: Any])
+        #expect(listReq1["type"] as? String == "listSessions")
+        #expect(listReq1["cursor"] == nil)
+        let listID1 = try #require(listReq1["id"] as? String)
+
+        try writeFrame([
+            "type": "sessionsReply",
+            "id": listID1,
+            "accepted": true,
+            "sessions": [
+                ["id": "conv-1", "title": "Current chat", "updatedAt": "2026-11-25T07:10:09Z"],
+                ["id": "conv-old", "title": "Previous chat", "updatedAt": "2026-11-24T09:00:00Z", "messageCount": 12],
+            ],
+            "nextCursor": "page-2",
+        ], to: peerFD)
+
+        try await waitUntil { !bridge.isLoadingSessions && bridge.sessions.count == 2 }
+        #expect(bridge.nextSessionsCursor == "page-2")
+        #expect(!bridge.sessionsLoadFailed)
+
+        // 2. Load next page and deduplicate overlap.
+        bridge.loadMoreSessions(from: surface)
+        #expect(bridge.isLoadingMoreSessions)
+
+        let listLine2 = try await readLine(from: peerFD)
+        let listReq2 = try #require(JSONSerialization.jsonObject(with: Data(listLine2.utf8)) as? [String: Any])
+        #expect(listReq2["type"] as? String == "listSessions")
+        #expect(listReq2["cursor"] as? String == "page-2")
+        let listID2 = try #require(listReq2["id"] as? String)
+
+        try writeFrame([
+            "type": "sessionsReply",
+            "id": listID2,
+            "accepted": true,
+            "sessions": [
+                ["id": "conv-old", "title": "Previous chat"],
+                ["id": "conv-older", "title": "Older chat"],
+            ],
+        ], to: peerFD)
+
+        try await waitUntil { !bridge.isLoadingMoreSessions && bridge.sessions.count == 3 }
+        #expect(bridge.nextSessionsCursor == nil)
+
+        // 3. Resuming the active conversation is a no-op.
+        bridge.resumeSession("conv-1", from: surface)
+        #expect(bridge.pendingResumeSession == nil)
+
+        // 4. Resuming a previous conversation replaces rows via snapshot and clears pending state.
+        bridge.resumeSession("conv-old", from: surface)
+        #expect(bridge.pendingResumeSession != nil)
+
+        let resumeLine = try await readLine(from: peerFD)
+        let resumeReq = try #require(JSONSerialization.jsonObject(with: Data(resumeLine.utf8)) as? [String: Any])
+        #expect(resumeReq["type"] as? String == "resumeSession")
+        #expect(resumeReq["sessionId"] as? String == "conv-old")
+        let resumeID = try #require(resumeReq["id"] as? String)
+
+        try writeFrame(["type": "snapshot", "conversation": "conv-old"], to: peerFD)
+        try writeFrame([
+            "type": "row",
+            "row": ["id": "h1", "kind": "user", "text": "Old question"],
+        ], to: peerFD)
+        try writeFrame([
+            "type": "row",
+            "row": ["id": "h2", "kind": "assistant", "text": "Old answer"],
+        ], to: peerFD)
+        try writeFrame(["type": "snapshotEnd", "busy": false, "waiting": false, "canResume": true], to: peerFD)
+        try writeFrame([
+            "type": "resumeSessionReply",
+            "id": resumeID,
+            "accepted": true,
+            "conversation": "conv-old",
+            "busy": false,
+            "waiting": false,
+        ], to: peerFD)
+
+        try await waitUntil { bridge.pendingResumeSession == nil && bridge.conversation == "conv-old" }
+        #expect(!bridge.resumeSessionRejected)
+        #expect(bridge.rows.map(\.id) == ["h1", "h2"])
+
+        // 5. Rejected resume keeps the active conversation intact.
+        bridge.resumeSession("conv-older", from: surface)
+        let rejectLine = try await readLine(from: peerFD)
+        let rejectReq = try #require(JSONSerialization.jsonObject(with: Data(rejectLine.utf8)) as? [String: Any])
+        let rejectID = try #require(rejectReq["id"] as? String)
+        try writeFrame([
+            "type": "resumeSessionReply",
+            "id": rejectID,
+            "accepted": false,
+            "busy": false,
+            "waiting": false,
+        ], to: peerFD)
+
+        try await waitUntil { bridge.pendingResumeSession == nil && bridge.resumeSessionRejected }
+        #expect(bridge.conversation == "conv-old")
+        #expect(bridge.rows.map(\.id) == ["h1", "h2"])
+    }
+
     private func makeListeningBridgeSocket(prefix: String) throws -> (String, Int32, () -> Void) {
         let token = String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(6))
         let directory = "/tmp/macterm-\(prefix)-\(token)"

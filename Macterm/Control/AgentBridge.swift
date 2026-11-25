@@ -159,6 +159,14 @@ final class AgentBridge {
         let options: [Option]
     }
 
+    struct SessionSummary: Decodable, Identifiable, Equatable {
+        let id: String
+        let title: String
+        var updatedAt: String?
+        var cwd: String?
+        var messageCount: Int?
+    }
+
     private struct Event: Decodable {
         enum Kind: String, Decodable {
             case snapshot
@@ -169,6 +177,8 @@ final class AgentBridge {
             case config
             case configReply
             case newConversationReply
+            case sessionsReply
+            case resumeSessionReply
             case permissionReply
             case completeUpdate
             case completeReply
@@ -179,10 +189,13 @@ final class AgentBridge {
         var row: Row?
         var busy: Bool?
         var waiting: Bool?
+        var canResume: Bool?
         var id: UUID?
         var accepted: Bool?
         var configOptions: [ConfigOption]?
         var permissions: [PermissionRequest]?
+        var sessions: [SessionSummary]?
+        var nextCursor: String?
         var text: String?
         var error: String?
     }
@@ -195,6 +208,8 @@ final class AgentBridge {
         var attachments: [AgentAttachment]?
         var configId: String?
         var value: String?
+        var cursor: String?
+        var sessionId: String?
         var permissionId: String?
         var optionId: String?
         var instructions: String?
@@ -218,12 +233,20 @@ final class AgentBridge {
     private(set) var isReady = false
     private(set) var isBusy = false
     private(set) var isWaiting = false
+    private(set) var canResume = false
+    private(set) var sessions: [SessionSummary] = []
+    private(set) var nextSessionsCursor: String?
+    private(set) var isLoadingSessions = false
+    private(set) var isLoadingMoreSessions = false
+    private(set) var sessionsLoadFailed = false
     private(set) var pendingSend: UUID?
     private(set) var sendRejected = false
     private(set) var pendingConfigID: String?
     private(set) var configRejected = false
     private(set) var pendingNewConversation: UUID?
     private(set) var newConversationRejected = false
+    private(set) var pendingResumeSession: UUID?
+    private(set) var resumeSessionRejected = false
     private(set) var pendingPermissionID: String?
     private(set) var permissionRejected = false
     private(set) var isExiting = false
@@ -277,6 +300,9 @@ final class AgentBridge {
     private var pendingConfigRequest: (id: UUID, configID: String)?
     private var configTimeout: Task<Void, Never>?
     private var newConversationTimeout: Task<Void, Never>?
+    private var pendingSessionsRequest: (id: UUID, append: Bool)?
+    private var sessionsTimeout: Task<Void, Never>?
+    private var resumeSessionTimeout: Task<Void, Never>?
     private var pendingPermissionRequest: (id: UUID, permissionID: String)?
     private var permissionTimeout: Task<Void, Never>?
     private var exitTimeout: Task<Void, Never>?
@@ -351,6 +377,11 @@ final class AgentBridge {
         pendingConfigRequest = nil
         pendingConfigID = nil
         pendingNewConversation = nil
+        pendingSessionsRequest = nil
+        isLoadingSessions = false
+        isLoadingMoreSessions = false
+        pendingResumeSession = nil
+        resumeSessionRejected = false
         pendingPermissions = []
         pendingPermissionRequest = nil
         pendingPermissionID = nil
@@ -359,6 +390,8 @@ final class AgentBridge {
         requestTimeout?.cancel()
         configTimeout?.cancel()
         newConversationTimeout?.cancel()
+        sessionsTimeout?.cancel()
+        resumeSessionTimeout?.cancel()
         permissionTimeout?.cancel()
         exitTimeout?.cancel()
         let completions = pendingCompletions
@@ -391,7 +424,8 @@ final class AgentBridge {
 
     func submit(from surface: PaneSurface) {
         guard canSend(from: surface), !isBusy, !isWaiting,
-              pendingSend == nil, pendingConfigRequest == nil, pendingNewConversation == nil,
+              pendingSend == nil, pendingConfigRequest == nil,
+              pendingNewConversation == nil, pendingResumeSession == nil,
               hasDraftContent, !isDraftTooLong
         else { return }
         let id = UUID()
@@ -403,6 +437,7 @@ final class AgentBridge {
         sendRejected = false
         configRejected = false
         newConversationRejected = false
+        resumeSessionRejected = false
         pendingSend = id
         pendingSendText = submitted
         pendingSendAttachments = submittedAttachments
@@ -435,7 +470,8 @@ final class AgentBridge {
 
     func setConfig(_ configID: String, value: String, from surface: PaneSurface) {
         guard canSend(from: surface), !isBusy, !isWaiting,
-              pendingSend == nil, pendingConfigRequest == nil, pendingNewConversation == nil,
+              pendingSend == nil, pendingConfigRequest == nil,
+              pendingNewConversation == nil, pendingResumeSession == nil,
               let option = configOptions.first(where: { $0.id == configID }),
               option.currentValue != value,
               option.options.contains(where: { $0.value == value })
@@ -443,6 +479,7 @@ final class AgentBridge {
         let id = UUID()
         configRejected = false
         newConversationRejected = false
+        resumeSessionRejected = false
         pendingConfigRequest = (id, configID)
         pendingConfigID = configID
         send(Command(type: "setConfig", id: id, configId: configID, value: value))
@@ -458,12 +495,14 @@ final class AgentBridge {
 
     func newConversation(from surface: PaneSurface) {
         guard canSend(from: surface), !isBusy, !isWaiting,
-              pendingSend == nil, pendingConfigRequest == nil, pendingNewConversation == nil
+              pendingSend == nil, pendingConfigRequest == nil,
+              pendingNewConversation == nil, pendingResumeSession == nil
         else { return }
         let id = UUID()
         sendRejected = false
         configRejected = false
         newConversationRejected = false
+        resumeSessionRejected = false
         pendingNewConversation = id
         send(Command(type: "newConversation", id: id))
         newConversationTimeout?.cancel()
@@ -472,6 +511,64 @@ final class AgentBridge {
             guard !Task.isCancelled, let self, pendingNewConversation == id else { return }
             pendingNewConversation = nil
             newConversationRejected = true
+        }
+    }
+
+    func loadSessions(from surface: PaneSurface) {
+        guard canInspect(from: surface), canResume else { return }
+        requestSessions(cursor: nil, append: false)
+    }
+
+    func loadMoreSessions(from surface: PaneSurface) {
+        guard canInspect(from: surface), canResume,
+              !isLoadingSessions, !isLoadingMoreSessions,
+              let cursor = nextSessionsCursor, !cursor.isEmpty
+        else { return }
+        requestSessions(cursor: cursor, append: true)
+    }
+
+    private func requestSessions(cursor: String?, append: Bool) {
+        let id = UUID()
+        pendingSessionsRequest = (id, append)
+        sessionsLoadFailed = false
+        if append {
+            isLoadingMoreSessions = true
+        } else {
+            isLoadingSessions = true
+            isLoadingMoreSessions = false
+        }
+        send(Command(type: "listSessions", id: id, cursor: cursor))
+        sessionsTimeout?.cancel()
+        sessionsTimeout = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(15))
+            guard !Task.isCancelled, let self, pendingSessionsRequest?.id == id else { return }
+            pendingSessionsRequest = nil
+            isLoadingSessions = false
+            isLoadingMoreSessions = false
+            sessionsLoadFailed = true
+        }
+    }
+
+    func resumeSession(_ sessionID: String, from surface: PaneSurface) {
+        let trimmed = sessionID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard canSend(from: surface), canResume, !isBusy, !isWaiting,
+              pendingSend == nil, pendingConfigRequest == nil,
+              pendingNewConversation == nil, pendingResumeSession == nil,
+              !trimmed.isEmpty, trimmed.utf8.count <= 256, trimmed != conversation
+        else { return }
+        let id = UUID()
+        sendRejected = false
+        configRejected = false
+        newConversationRejected = false
+        resumeSessionRejected = false
+        pendingResumeSession = id
+        send(Command(type: "resumeSession", id: id, sessionId: trimmed))
+        resumeSessionTimeout?.cancel()
+        resumeSessionTimeout = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(30))
+            guard !Task.isCancelled, let self, pendingResumeSession == id else { return }
+            pendingResumeSession = nil
+            resumeSessionRejected = true
         }
     }
 
@@ -583,6 +680,13 @@ final class AgentBridge {
         entry.continuation.resume(returning: nil)
     }
 
+    private func canInspect(from surface: PaneSurface) -> Bool {
+        guard !isExiting, isReady, !surface.isDestroyed, registry.bridge(for: surface.pane) === self,
+              let windowID = surface.windowID
+        else { return false }
+        return showsGUI(in: windowID)
+    }
+
     private func canSend(from surface: PaneSurface) -> Bool {
         guard !isExiting, !surface.isDestroyed, !surface.isReadOnly, registry.bridge(for: surface.pane) === self,
               let windowID = surface.windowID
@@ -681,6 +785,9 @@ final class AgentBridge {
             if event.permissions == nil {
                 clearPendingPermissions()
             }
+            if let canResume = event.canResume {
+                self.canResume = canResume
+            }
             applyStatus(event)
             applyConfig(event)
             isReady = true
@@ -724,7 +831,48 @@ final class AgentBridge {
                 optimisticUserRow = nil
                 sendRejected = false
                 configRejected = false
+                resumeSessionRejected = false
                 clearPendingPermissions()
+            }
+            applyConfig(event)
+            applyStatus(event)
+        case .sessionsReply:
+            guard let id = event.id, let pending = pendingSessionsRequest, pending.id == id else { return }
+            sessionsTimeout?.cancel()
+            pendingSessionsRequest = nil
+            isLoadingSessions = false
+            isLoadingMoreSessions = false
+            guard event.accepted == true else {
+                sessionsLoadFailed = true
+                return
+            }
+            sessionsLoadFailed = false
+            let incoming = event.sessions ?? []
+            if pending.append {
+                var existing = Set(sessions.map(\.id))
+                for item in incoming where existing.insert(item.id).inserted {
+                    sessions.append(item)
+                }
+            } else {
+                sessions = incoming
+            }
+            if let cursor = event.nextCursor, !cursor.isEmpty {
+                nextSessionsCursor = cursor
+            } else {
+                nextSessionsCursor = nil
+            }
+        case .resumeSessionReply:
+            guard let id = event.id, id == pendingResumeSession else { return }
+            resumeSessionTimeout?.cancel()
+            pendingResumeSession = nil
+            resumeSessionRejected = event.accepted != true
+            if !resumeSessionRejected {
+                if let next = event.conversation, !next.isEmpty, next.utf8.count <= 256 {
+                    conversation = next
+                }
+                sendRejected = false
+                configRejected = false
+                newConversationRejected = false
             }
             applyConfig(event)
             applyStatus(event)

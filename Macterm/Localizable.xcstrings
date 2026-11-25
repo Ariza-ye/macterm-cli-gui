@@ -590,6 +590,22 @@
         }
       }
     },
+    "%lld messages" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "메시지 %lld개"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%lld 条消息"
+          }
+        }
+      }
+    },
     "%lld panes" : {
       "comment" : "Sidebar title of a tab with four or more panes",
       "localizations" : {
@@ -2071,6 +2087,22 @@
         }
       }
     },
+    "Browse and resume previous conversations" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이전 대화를 탐색하고 이어서 진행합니다"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "浏览并恢复历史会话"
+          }
+        }
+      }
+    },
     "Browse files and folders in this project" : {
       "localizations" : {
         "ko" : {
@@ -3539,6 +3571,22 @@
         }
       }
     },
+    "Could not load conversations." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "대화 기록을 불러올 수 없습니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法加载历史会话。"
+          }
+        }
+      }
+    },
     "Could not read %@." : {
       "localizations" : {
         "ko" : {
@@ -3599,6 +3647,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "创建项目"
+          }
+        }
+      }
+    },
+    "Current" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "현재"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "当前"
           }
         }
       }
@@ -5113,6 +5177,22 @@
         }
       }
     },
+    "History" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "대화 기록"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "历史会话"
+          }
+        }
+      }
+    },
     "Host" : {
       "localizations" : {
         "ko" : {
@@ -5907,6 +5987,22 @@
         }
       }
     },
+    "Loading conversations…" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "대화 기록 불러오는 중…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在加载历史会话…"
+          }
+        }
+      }
+    },
     "Loading diff…" : {
       "localizations" : {
         "ko" : {
@@ -5919,6 +6015,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "正在加载差异…"
+          }
+        }
+      }
+    },
+    "Loading…" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "불러오는 중…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在加载…"
           }
         }
       }
@@ -7376,6 +7488,22 @@
         }
       }
     },
+    "No matching conversations" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "일치하는 대화가 없습니다"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有匹配的历史会话"
+          }
+        }
+      }
+    },
     "No matching options" : {
       "localizations" : {
         "ko" : {
@@ -7452,6 +7580,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "未声明路径。"
+          }
+        }
+      }
+    },
+    "No previous conversations" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이전 대화가 없습니다"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "暂无历史会话"
           }
         }
       }
@@ -9492,6 +9636,22 @@
         }
       }
     },
+    "Refresh conversations" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "대화 기록 새로 고침"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "刷新历史会话"
+          }
+        }
+      }
+    },
     "Register this chord system-wide, so it runs the action while another app is frontmost. The chord then belongs to Macterm everywhere — no other app can see it, and it can no longer pass through to a program." : {
       "localizations" : {
         "ko" : {
@@ -10733,6 +10893,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "按命令或提示符搜索..."
+          }
+        }
+      }
+    },
+    "Search conversations" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "대화 검색"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "搜索历史会话"
           }
         }
       }
@@ -12406,6 +12582,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Agent 未确认权限回复。"
+          }
+        }
+      }
+    },
+    "The agent did not resume the conversation." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "에이전트가 대화를 이어서 열지 않았습니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agent 未恢复该对话。"
           }
         }
       }

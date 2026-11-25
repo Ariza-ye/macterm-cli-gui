@@ -324,6 +324,48 @@ export function normalizeConfigOptions(rawConfigOptions, rawModels, rawModes) {
     return { configOptions: normalized, usesLegacyModels, usesLegacyModes, booleanIds };
 }
 
+export function detectCanResume(agentCapabilities) {
+    if (!agentCapabilities || typeof agentCapabilities !== "object") return false;
+    const sessionCaps = agentCapabilities.sessionCapabilities ?? agentCapabilities.session_capabilities;
+    const canList = Boolean(
+        sessionCaps && typeof sessionCaps === "object" && sessionCaps.list !== undefined && sessionCaps.list !== false,
+    );
+    const canLoad = Boolean(
+        agentCapabilities.loadSession === true
+        || agentCapabilities.load_session === true
+        || (sessionCaps && typeof sessionCaps === "object"
+            && sessionCaps.load !== undefined && sessionCaps.load !== false),
+    );
+    return canList && canLoad;
+}
+
+export function normalizeSessionList(result) {
+    const rawSessions = Array.isArray(result?.sessions) ? result.sessions : [];
+    const seen = new Set();
+    const sessions = [];
+    for (const item of rawSessions) {
+        const id = typeof item?.sessionId === "string" ? item.sessionId.trim() : "";
+        if (!id || id.length > 256 || seen.has(id)) continue;
+        seen.add(id);
+        const rawTitle = typeof item?.title === "string" ? clean(item.title).replace(/\s+/g, " ").trim() : "";
+        const entry = {
+            id,
+            title: (rawTitle || id).slice(0, 256),
+        };
+        if (typeof item?.updatedAt === "string" && item.updatedAt.trim()) {
+            entry.updatedAt = clean(item.updatedAt).trim().slice(0, 64);
+        }
+        if (typeof item?.cwd === "string" && item.cwd.trim()) {
+            entry.cwd = clean(item.cwd).trim().slice(0, 1024);
+        }
+        sessions.push(entry);
+    }
+    const nextCursor = typeof result?.nextCursor === "string" && result.nextCursor.trim()
+        ? result.nextCursor
+        : undefined;
+    return { sessions, nextCursor };
+}
+
 export function formatToolText(update, previous) {
     const details = Array.isArray(update.content)
         ? update.content.flatMap(item => {
@@ -516,8 +558,11 @@ export async function runAcpBridge(config, runtime = {}) {
     let usesLegacyModes = false;
     let booleanConfigIds = new Set();
     let promptCapabilities = {};
+    let canResume = false;
     let configPending = false;
     let newConversationPending = false;
+    let resumePending = false;
+    let loadingSession;
 
     const writeOut = text => outputStream.write(text);
     const writeErr = text => errorStream.write(text);
@@ -590,22 +635,27 @@ export async function runAcpBridge(config, runtime = {}) {
         emit({ type: "row", row });
     }
 
-    function update({ update }) {
-        if (!update) return;
+    function applyRowUpdate(targetRows, currentMessage, update, { silent = false, skipUserDuringTurn = false } = {}) {
         const { sessionUpdate: type, content } = update;
-        if (type === "user_message_chunk" && turn) return;
+        if (type === "user_message_chunk" && skipUserDuringTurn && turn) return currentMessage;
+        let nextMessage = currentMessage;
+        const writeRow = row => {
+            targetRows.set(row.id, row);
+            if (!silent) emit({ type: "row", row });
+        };
+
         if (type === "agent_message_chunk" || type === "user_message_chunk") {
             const kind = type === "agent_message_chunk" ? "assistant" : "user";
             if (content?.type === "text") {
-                if (message?.kind !== kind) message = { id: randomUUID(), kind, text: "" };
+                if (nextMessage?.kind !== kind) nextMessage = { id: randomUUID(), kind, text: "" };
                 const text = clean(content.text);
-                if (kind === "assistant") writeOut(text);
-                message = { ...message, text: (message.text + text).slice(0, 64 * 1024) };
-                upsert(message);
+                if (kind === "assistant" && !silent) writeOut(text);
+                nextMessage = { ...nextMessage, text: (nextMessage.text + text).slice(0, 64 * 1024) };
+                writeRow(nextMessage);
             } else if (content?.type === "image" && typeof content.data === "string" && typeof content.mimeType === "string") {
                 const byteCount = decodedBase64Bytes(content.data);
-                if (byteCount <= 0 || byteCount > MAX_IMAGE_ATTACHMENT_BYTES) return;
-                if (message?.kind !== kind) message = { id: randomUUID(), kind, text: "" };
+                if (byteCount <= 0 || byteCount > MAX_IMAGE_ATTACHMENT_BYTES) return nextMessage;
+                if (nextMessage?.kind !== kind) nextMessage = { id: randomUUID(), kind, text: "" };
                 const ext = content.mimeType.split("/")[1]?.split(";")[0] || "png";
                 const attachment = {
                     id: randomUUID(),
@@ -615,16 +665,16 @@ export async function runAcpBridge(config, runtime = {}) {
                     data: content.data,
                     byteCount,
                 };
-                const existing = Array.isArray(message.attachments) ? message.attachments : [];
+                const existing = Array.isArray(nextMessage.attachments) ? nextMessage.attachments : [];
                 if (existing.length < MAX_ATTACHMENTS) {
-                    message = { ...message, attachments: [...existing, attachment] };
-                    upsert(message);
+                    nextMessage = { ...nextMessage, attachments: [...existing, attachment] };
+                    writeRow(nextMessage);
                 }
             } else if (content?.type === "resource" && typeof content.resource?.text === "string") {
                 const text = clean(content.resource.text);
                 const byteCount = Buffer.byteLength(text, "utf8");
-                if (byteCount > MAX_TEXT_ATTACHMENT_BYTES) return;
-                if (message?.kind !== kind) message = { id: randomUUID(), kind, text: "" };
+                if (byteCount > MAX_TEXT_ATTACHMENT_BYTES) return nextMessage;
+                if (nextMessage?.kind !== kind) nextMessage = { id: randomUUID(), kind, text: "" };
                 const attachment = {
                     id: randomUUID(),
                     kind: "text",
@@ -633,23 +683,38 @@ export async function runAcpBridge(config, runtime = {}) {
                     text,
                     byteCount,
                 };
-                const existing = Array.isArray(message.attachments) ? message.attachments : [];
+                const existing = Array.isArray(nextMessage.attachments) ? nextMessage.attachments : [];
                 if (existing.length < MAX_ATTACHMENTS) {
-                    message = { ...message, attachments: [...existing, attachment] };
-                    upsert(message);
+                    nextMessage = { ...nextMessage, attachments: [...existing, attachment] };
+                    writeRow(nextMessage);
                 }
             }
-        } else if (type === "tool_call" || type === "tool_call_update") {
-            message = undefined;
+            return nextMessage;
+        }
+
+        if (type === "tool_call" || type === "tool_call_update") {
+            nextMessage = undefined;
             const id = `tool:${update.toolCallId}`;
-            const previous = rows.get(id);
+            const previous = targetRows.get(id);
             const name = clean(update.title) || previous?.name || update.kind || "Tool";
             const toolStatus = update.status === "failed" ? "failed"
                 : update.status === "completed" ? "completed"
                 : update.status ? "running" : previous?.status ?? "running";
             const text = formatToolText(update, previous);
-            if (!previous) writeOut(`\n${name}\n`);
-            upsert({ id, kind: "tool", text, name, status: toolStatus });
+            if (!previous && !silent) writeOut(`\n${name}\n`);
+            writeRow({ id, kind: "tool", text, name, status: toolStatus });
+            return nextMessage;
+        }
+
+        return nextMessage;
+    }
+
+    function update({ update }) {
+        if (!update) return;
+        const { sessionUpdate: type } = update;
+        if (type === "agent_message_chunk" || type === "user_message_chunk"
+            || type === "tool_call" || type === "tool_call_update") {
+            message = applyRowUpdate(rows, message, update, { silent: false, skipUserDuringTurn: true });
         } else if ((type === "config_option_update" || type === "config_options_update")
             && Array.isArray(update.configOptions)) {
             updateConfigOptions(update.configOptions);
@@ -785,6 +850,21 @@ export async function runAcpBridge(config, runtime = {}) {
             }
             return;
         }
+        if (loadingSession && params?.sessionId === loadingSession.sessionId) {
+            if (method === "session/update" && params?.update) {
+                loadingSession.message = applyRowUpdate(
+                    loadingSession.rows,
+                    loadingSession.message,
+                    params.update,
+                    { silent: true },
+                );
+            } else if (method === "session/request_permission" && id !== undefined) {
+                rpc({ id, result: { outcome: { outcome: "cancelled" } } });
+            } else if (method && id !== undefined) {
+                rpc({ id, error: { code: -32601, message: "This client does not support the request." } });
+            }
+            return;
+        }
         if (method === "session/update" && (!sessionID || params?.sessionId === sessionID)) {
             update(params);
         } else if (method === "session/request_permission" && id !== undefined && params?.sessionId === sessionID) {
@@ -803,7 +883,7 @@ export async function runAcpBridge(config, runtime = {}) {
         const normalizedText = typeof text === "string" ? text : "";
         const normalized = normalizeAttachments(attachments);
         const hasContent = Boolean(normalizedText.trim()) || normalized.attachments.length > 0;
-        if (!sessionID || turn || permissions.size || configPending || newConversationPending
+        if (!sessionID || turn || permissions.size || configPending || newConversationPending || resumePending
             || !normalized.valid || !hasContent
             || Buffer.byteLength(normalizedText) > 128 * 1024) {
             if (owner === peer && owner) emit({ type: "reply", id, accepted: false, ...state() });
@@ -848,7 +928,7 @@ export async function runAcpBridge(config, runtime = {}) {
             if (owner && owner === peer) emit({ type: "configReply", id, accepted, configOptions, ...state() });
         };
         const option = configOptions.find(item => item.id === configId);
-        if (!sessionID || turn || permissions.size || configPending || newConversationPending
+        if (!sessionID || turn || permissions.size || configPending || newConversationPending || resumePending
             || typeof configId !== "string"
             || typeof value !== "string" || !option || !option.options.some(choice => choice.value === value)) {
             reply(false);
@@ -902,7 +982,7 @@ export async function runAcpBridge(config, runtime = {}) {
                 });
             }
         };
-        if (!sessionID || turn || permissions.size || configPending || newConversationPending) {
+        if (!sessionID || turn || permissions.size || configPending || newConversationPending || resumePending) {
             reply(false);
             return;
         }
@@ -925,13 +1005,106 @@ export async function runAcpBridge(config, runtime = {}) {
                 reply(true);
             } else {
                 emit({ type: "snapshot", conversation: sessionID });
-                emit({ type: "snapshotEnd", ...state(), configOptions });
+                emit({ type: "snapshotEnd", ...state(), configOptions, canResume });
             }
         } catch (error) {
             if (!closed) writeErr(`\n${clean(error.message)}\n`);
             reply(false);
         } finally {
             newConversationPending = false;
+        }
+    }
+
+    async function listSessions(cursor, owner, id) {
+        const reply = (accepted, extra = {}) => {
+            if (owner && owner === peer) {
+                emit({ type: "sessionsReply", id, accepted, ...extra });
+            }
+        };
+        if (!sessionID || !canResume || closed) {
+            reply(false, { error: "unsupported" });
+            return undefined;
+        }
+        try {
+            const params = { cwd };
+            if (typeof cursor === "string" && cursor.trim()) {
+                params.cursor = cursor.trim();
+            }
+            const result = await request("session/list", params);
+            const normalized = normalizeSessionList(result);
+            reply(true, {
+                sessions: normalized.sessions,
+                ...(normalized.nextCursor ? { nextCursor: normalized.nextCursor } : {}),
+            });
+            return normalized;
+        } catch (error) {
+            if (!closed && !owner) writeErr(`\n${clean(error.message)}\n`);
+            reply(false, { error: clean(error?.message ?? "list_failed") });
+            return undefined;
+        }
+    }
+
+    async function resumeSession(targetSessionId, owner, id) {
+        const reply = accepted => {
+            if (owner && owner === peer) {
+                emit({
+                    type: "resumeSessionReply",
+                    id,
+                    accepted,
+                    ...(accepted ? { conversation: sessionID, configOptions } : {}),
+                    ...state(),
+                });
+            }
+        };
+        const target = typeof targetSessionId === "string" ? targetSessionId.trim() : "";
+        if (!sessionID || !canResume || turn || permissions.size || configPending || newConversationPending
+            || resumePending || !target || target.length > 256) {
+            reply(false);
+            return;
+        }
+        if (target === sessionID) {
+            reply(true);
+            return;
+        }
+        resumePending = true;
+        const buffered = { sessionId: target, rows: new Map(), message: undefined };
+        loadingSession = buffered;
+        try {
+            const sessionResult = await request("session/load", {
+                cwd,
+                mcpServers: [],
+                sessionId: target,
+            });
+            const nextSessionID = typeof sessionResult?.sessionId === "string" && sessionResult.sessionId
+                ? sessionResult.sessionId
+                : target;
+            sessionID = nextSessionID;
+            rows.clear();
+            for (const [rowId, row] of buffered.rows) {
+                rows.set(rowId, row);
+            }
+            message = undefined;
+            if (sessionResult?.configOptions !== undefined
+                || sessionResult?.models !== undefined
+                || sessionResult?.modes !== undefined) {
+                applySessionConfig(sessionResult?.configOptions, sessionResult?.models, sessionResult?.modes);
+            }
+            loadingSession = undefined;
+            if (!closed) {
+                writeOut(`\n${config.name} conversation: ${clean(sessionID)}\n`);
+                if (!permissions.size) terminal.prompt();
+            }
+            emit({ type: "snapshot", conversation: sessionID });
+            for (const row of rows.values()) emit({ type: "row", row });
+            emit({ type: "snapshotEnd", ...state(), configOptions, canResume });
+            if (owner) reply(true);
+        } catch (error) {
+            loadingSession = undefined;
+            if (!closed) writeErr(`\n${clean(error.message)}\n`);
+            reply(false);
+        } finally {
+            loadingSession = undefined;
+            resumePending = false;
         }
     }
 
@@ -1040,11 +1213,46 @@ export async function runAcpBridge(config, runtime = {}) {
         } else if (line === "/exit") {
             close();
         } else if (line === "/new") {
-            if (turn || configPending || newConversationPending) writeOut("Wait for the current turn to end.\n");
-            else void newConversation();
+            if (turn || configPending || newConversationPending || resumePending) {
+                writeOut("Wait for the current turn to end.\n");
+            } else {
+                void newConversation();
+            }
+        } else if (line === "/resume" || line.startsWith("/resume ")) {
+            if (!canResume) {
+                writeOut(`${config.name} does not support resuming conversations.\n`);
+                terminal.prompt();
+                return;
+            }
+            if (turn || configPending || newConversationPending || resumePending) {
+                writeOut("Wait for the current turn to end.\n");
+                return;
+            }
+            const target = line.slice("/resume".length).trim();
+            if (target) {
+                void resumeSession(target);
+            } else {
+                void listSessions(undefined, undefined, undefined).then(result => {
+                    if (closed) return;
+                    const list = result?.sessions ?? [];
+                    if (list.length === 0) {
+                        writeOut("No previous conversations.\n");
+                    } else {
+                        for (const item of list.slice(0, 20)) {
+                            const marker = item.id === sessionID ? "*" : " ";
+                            writeOut(`${marker} ${item.id}  ${item.title}\n`);
+                        }
+                        writeOut("Run /resume <id> to load a conversation.\n");
+                    }
+                    if (!turn && !permissions.size) terminal.prompt();
+                });
+            }
         } else if (line.trim()) {
-            if (turn || configPending || newConversationPending) writeOut("Wait for the current turn to end.\n");
-            else void prompt(line, []);
+            if (turn || configPending || newConversationPending || resumePending) {
+                writeOut("Wait for the current turn to end.\n");
+            } else {
+                void prompt(line, []);
+            }
         } else if (!turn) {
             terminal.prompt();
         }
@@ -1078,13 +1286,17 @@ export async function runAcpBridge(config, runtime = {}) {
                 socket.setTimeout(0);
                 emit({ type: "snapshot", conversation: sessionID });
                 for (const row of rows.values()) emit({ type: "row", row });
-                emit({ type: "snapshotEnd", ...state(), configOptions });
+                emit({ type: "snapshotEnd", ...state(), configOptions, canResume });
             } else if (command?.type === "send" && typeof command.id === "string") {
                 void prompt(command.text ?? "", command.attachments, socket, command.id);
             } else if (command?.type === "setConfig" && typeof command.id === "string") {
                 void setConfig(command.configId, command.value, socket, command.id);
             } else if (command?.type === "newConversation" && typeof command.id === "string") {
                 void newConversation(socket, command.id);
+            } else if (command?.type === "listSessions" && typeof command.id === "string") {
+                void listSessions(command.cursor, socket, command.id);
+            } else if (command?.type === "resumeSession" && typeof command.id === "string") {
+                void resumeSession(command.sessionId, socket, command.id);
             } else if (command?.type === "permissionReply" && typeof command.id === "string") {
                 resolvePermission(command.permissionId, command.optionId, socket, command.id);
             } else if (command?.type === "complete" && typeof command.id === "string") {
@@ -1206,6 +1418,7 @@ export async function runAcpBridge(config, runtime = {}) {
         });
         if (initialized?.protocolVersion !== 1) throw new Error("Macterm requires ACP version 1.");
         promptCapabilities = initialized?.agentCapabilities?.promptCapabilities ?? {};
+        canResume = detectCanResume(initialized?.agentCapabilities);
         const params = { cwd, mcpServers: [] };
         let sessionResult;
         if (config.conversation) {

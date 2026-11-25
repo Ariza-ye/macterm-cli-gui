@@ -11,6 +11,8 @@ struct AgentPaneView: View {
     let closeAgent: () -> Void
     @State private var previewContext: AgentAttachmentPreviewContext?
     @State private var isGitDiffPresented = false
+    @State private var isHistoryPresented = false
+    @State private var historyInitialQuery = ""
     @State private var isDropTargeted = false
 
     private var appearanceSettings: AgentAppearanceSettings { .shared }
@@ -142,6 +144,43 @@ struct AgentPaneView: View {
             .fixedSize()
             .pointingHandCursor()
             .help(Text("Review Git changes, commit, push, and pull"))
+            if bridge.canResume {
+                Button {
+                    historyInitialQuery = ""
+                    isHistoryPresented.toggle()
+                } label: {
+                    if bridge.pendingResumeSession != nil {
+                        HStack(spacing: 5) {
+                            ProgressView().controlSize(.mini)
+                            Text("History")
+                        }
+                    } else {
+                        Label("History", systemImage: "clock.arrow.circlepath")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(!canStartAction)
+                .fixedSize()
+                .pointingHandCursor(canStartAction)
+                .help(Text("Browse and resume previous conversations"))
+                .popover(isPresented: $isHistoryPresented, arrowEdge: .bottom) {
+                    AgentSessionHistoryPopover(
+                        bridge: bridge,
+                        surface: surface,
+                        initialQuery: historyInitialQuery,
+                        onSelect: { sessionID in
+                            isHistoryPresented = false
+                            if sessionID != bridge.conversation {
+                                bridge.resumeSession(sessionID, from: surface)
+                            }
+                            if let input = focus.input {
+                                input.window?.makeFirstResponder(input)
+                            }
+                        }
+                    )
+                }
+            }
             Button {
                 bridge.newConversation(from: surface)
                 if let input = focus.input {
@@ -216,7 +255,7 @@ struct AgentPaneView: View {
                 font: appearance.bodyNSFont(),
                 minHeight: appearance.composerMinHeight,
                 maxHeight: maxEditorHeight,
-                submit: { bridge.submit(from: surface) },
+                submit: { submitDraft() },
                 canPaste: { pasteboard in canPasteAttachment(from: pasteboard) },
                 onPaste: { pasteboard in handlePaste(pasteboard) },
                 onCycleMode: (bridge.modeOption?.options.count ?? 0) > 1
@@ -249,7 +288,7 @@ struct AgentPaneView: View {
                     .pointingHandCursor(canStop)
                 } else {
                     Button {
-                        bridge.submit(from: surface)
+                        submitDraft()
                     } label: {
                         Label("Send", systemImage: "arrow.up")
                     }
@@ -318,12 +357,14 @@ struct AgentPaneView: View {
 
     private var hasComposerStatus: Bool {
         surface.isReadOnly || bridge.sendRejected || bridge.configRejected
-            || bridge.newConversationRejected || bridge.attachmentError != nil || bridge.isDraftTooLong
+            || bridge.newConversationRejected || bridge.resumeSessionRejected
+            || bridge.attachmentError != nil || bridge.isDraftTooLong
     }
 
     private var canStartAction: Bool {
         !surface.isReadOnly && bridge.isReady && !bridge.isExiting && !bridge.isBusy && !bridge.isWaiting
-            && bridge.pendingSend == nil && bridge.pendingConfigID == nil && bridge.pendingNewConversation == nil
+            && bridge.pendingSend == nil && bridge.pendingConfigID == nil
+            && bridge.pendingNewConversation == nil && bridge.pendingResumeSession == nil
     }
 
     private var canExitAgent: Bool {
@@ -374,9 +415,27 @@ struct AgentPaneView: View {
             Text("The agent did not apply the setting.").foregroundStyle(MactermTheme.failure)
         } else if bridge.newConversationRejected {
             Text("The agent did not start a new conversation.").foregroundStyle(MactermTheme.failure)
+        } else if bridge.resumeSessionRejected {
+            Text("The agent did not resume the conversation.").foregroundStyle(MactermTheme.failure)
         } else if bridge.isDraftTooLong {
             Text("The message is too long.").foregroundStyle(MactermTheme.failure)
         }
+    }
+
+    private func submitDraft() {
+        if bridge.canResume, bridge.draftAttachments.isEmpty {
+            let trimmed = bridge.draft.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed == "/resume" || trimmed.hasPrefix("/resume ") {
+                guard canStartAction else { return }
+                let query = String(trimmed.dropFirst("/resume".count))
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                bridge.draft = ""
+                historyInitialQuery = query
+                isHistoryPresented = true
+                return
+            }
+        }
+        bridge.submit(from: surface)
     }
 
     private var resolvedWorkingDirectory: String? {
@@ -499,6 +558,237 @@ struct AgentPaneView: View {
             }
         }
         return true
+    }
+}
+
+private struct AgentSessionHistoryPopover: View {
+    @Bindable var bridge: AgentBridge
+    let surface: PaneSurface
+    let initialQuery: String
+    let onSelect: (String) -> Void
+
+    @State private var query = ""
+    @State private var hoveredID: String?
+    @FocusState private var searchFocused: Bool
+
+    private static let isoWithFractional: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
+
+    private static let isoStandard: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        return formatter
+    }()
+
+    private static let relativeDateFormatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .abbreviated
+        return formatter
+    }()
+
+    private var filteredSessions: [AgentBridge.SessionSummary] {
+        let tokens = query
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+            .split(whereSeparator: \.isWhitespace)
+            .map(String.init)
+        guard !tokens.isEmpty else { return bridge.sessions }
+        return bridge.sessions.filter { session in
+            let haystack = "\(session.title) \(session.id)".lowercased()
+            return tokens.allSatisfy { haystack.contains($0) }
+        }
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .font(.caption)
+                    .foregroundStyle(MactermTheme.fgMuted)
+                    .accessibilityHidden(true)
+                TextField("Search conversations", text: $query)
+                    .textFieldStyle(.plain)
+                    .font(.callout)
+                    .focused($searchFocused)
+                    .onSubmit {
+                        guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                              let first = filteredSessions.first
+                        else { return }
+                        onSelect(first.id)
+                    }
+                if !query.isEmpty {
+                    Button {
+                        query = ""
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(MactermTheme.fgMuted)
+                    }
+                    .buttonStyle(.plain)
+                    .pointingHandCursor()
+                    .accessibilityLabel(Text("Clear"))
+                }
+                Button {
+                    bridge.loadSessions(from: surface)
+                } label: {
+                    if bridge.isLoadingSessions {
+                        ProgressView().controlSize(.mini)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.caption)
+                            .foregroundStyle(MactermTheme.fgMuted)
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(bridge.isLoadingSessions)
+                .pointingHandCursor(!bridge.isLoadingSessions)
+                .help(Text("Refresh conversations"))
+                .accessibilityLabel(Text("Refresh conversations"))
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            Rectangle().fill(MactermTheme.border).frame(height: 1).accessibilityHidden(true)
+            content
+        }
+        .frame(width: 380, height: 400)
+        .foregroundStyle(MactermTheme.fg)
+        .background(Color(nsColor: MactermTheme.nsConfiguredBg.withAlphaComponent(1)))
+        .onAppear {
+            query = initialQuery
+            searchFocused = true
+            bridge.loadSessions(from: surface)
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        let items = filteredSessions
+        if bridge.isLoadingSessions, bridge.sessions.isEmpty {
+            VStack(spacing: 8) {
+                ProgressView().controlSize(.small)
+                Text("Loading conversations…")
+                    .font(.callout)
+                    .foregroundStyle(MactermTheme.fgMuted)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if bridge.sessionsLoadFailed, bridge.sessions.isEmpty {
+            VStack(spacing: 10) {
+                Text("Could not load conversations.")
+                    .font(.callout)
+                    .foregroundStyle(MactermTheme.fgMuted)
+                Button("Retry") {
+                    bridge.loadSessions(from: surface)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .pointingHandCursor()
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if items.isEmpty {
+            Text(bridge.sessions.isEmpty ? "No previous conversations" : "No matching conversations")
+                .font(.callout)
+                .foregroundStyle(MactermTheme.fgMuted)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 2) {
+                    ForEach(items) { session in
+                        sessionRow(session)
+                    }
+                    if bridge.nextSessionsCursor != nil {
+                        HStack {
+                            Spacer()
+                            Button {
+                                bridge.loadMoreSessions(from: surface)
+                            } label: {
+                                if bridge.isLoadingMoreSessions {
+                                    HStack(spacing: 6) {
+                                        ProgressView().controlSize(.mini)
+                                        Text("Loading…")
+                                    }
+                                } else {
+                                    Text("Load More")
+                                }
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .disabled(bridge.isLoadingMoreSessions)
+                            .pointingHandCursor(!bridge.isLoadingMoreSessions)
+                            Spacer()
+                        }
+                        .padding(.vertical, 8)
+                    }
+                }
+                .padding(6)
+            }
+        }
+    }
+
+    private func sessionRow(_ session: AgentBridge.SessionSummary) -> some View {
+        let isCurrent = session.id == bridge.conversation
+        let isHovered = hoveredID == session.id
+        return Button {
+            onSelect(session.id)
+        } label: {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: "checkmark")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(MactermTheme.accent)
+                    .opacity(isCurrent ? 1 : 0)
+                    .frame(width: 12)
+                    .padding(.top, 3)
+                    .accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(verbatim: session.title)
+                        .font(.callout)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    HStack(spacing: 6) {
+                        if let timeText = Self.formattedRelativeTime(session.updatedAt) {
+                            Text(verbatim: timeText)
+                        }
+                        if let count = session.messageCount, count > 0 {
+                            Text("\(count) messages")
+                        }
+                        if isCurrent {
+                            Text("Current")
+                                .foregroundStyle(MactermTheme.accent)
+                        }
+                    }
+                    .font(.caption)
+                    .foregroundStyle(MactermTheme.fgMuted)
+                    .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                isHovered ? MactermTheme.accentSoft : (isCurrent ? MactermTheme.surface : Color.clear),
+                in: RoundedRectangle(cornerRadius: 6)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .pointingHandCursor()
+        .onHover { hovering in
+            if hovering {
+                hoveredID = session.id
+            } else if hoveredID == session.id {
+                hoveredID = nil
+            }
+        }
+        .help(Text(verbatim: session.id))
+    }
+
+    private static func formattedRelativeTime(_ raw: String?) -> String? {
+        guard let raw, !raw.isEmpty else { return nil }
+        let date = isoWithFractional.date(from: raw) ?? isoStandard.date(from: raw)
+        guard let date else { return nil }
+        return relativeDateFormatter.localizedString(for: date, relativeTo: Date())
     }
 }
 
