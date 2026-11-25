@@ -547,8 +547,16 @@ enum AgentGitDiffParser {
 }
 
 /// Generates concise commit messages for the selected files, using Apple's on-device
-/// model when available and falling back to a deterministic local summary otherwise.
+/// model first, then the active agent CLI bridge, and falling back to a deterministic
+/// local summary when neither is available.
 enum AgentGitCommitMessageGenerator {
+    typealias CLICompletionHandler = @MainActor (
+        _ instructions: String,
+        _ prompt: String,
+        _ maximumResponseTokens: Int,
+        _ onPartial: @escaping @MainActor (String) -> Void
+    ) async -> String?
+
     enum CommitLanguage: Equatable {
         case english
         case simplifiedChinese
@@ -579,7 +587,7 @@ enum AgentGitCommitMessageGenerator {
         return .english
     }
 
-    static func instructions(for language: CommitLanguage) -> String {
+    static func instructions(for language: CommitLanguage, forbidTools: Bool = false) -> String {
         let languageRule = switch language {
         case .simplifiedChinese:
             "Write the commit message in Simplified Chinese."
@@ -588,13 +596,17 @@ enum AgentGitCommitMessageGenerator {
         case .english:
             "Write the commit message in English."
         }
-        return """
-        You write clear, concise Git commit messages from a list of changed files and their diffs.
-        \(languageRule)
-        Output ONLY the commit message text with no quotes, no markdown fences, and no explanation.
-        Keep the first line under 60 characters and summarize the actual intent of the changes.
-        If multiple distinct changes are included, you may add a blank line followed by up to 3 short bullet points.
-        """
+        var lines = [
+            "You write clear, concise Git commit messages from a list of changed files and their diffs.",
+            languageRule,
+            "Output ONLY the commit message text with no quotes, no markdown fences, and no explanation.",
+            "Keep the first line under 60 characters and summarize the actual intent of the changes.",
+            "If multiple distinct changes are included, you may add a blank line followed by up to 3 short bullet points.",
+        ]
+        if forbidTools {
+            lines.append("Do not call any tools, read files, or run commands. Use only the provided diff excerpts.")
+        }
+        return lines.joined(separator: "\n")
     }
 
     static func buildPrompt(
@@ -802,16 +814,25 @@ enum AgentGitCommitMessageGenerator {
         diffs: [String: AgentGitFileDiff],
         branch: String?,
         recentSubjects: [String],
-        onPartial: @MainActor (String) -> Void
+        cliComplete: CLICompletionHandler? = nil,
+        onDeviceAvailability: OnDeviceModel.Availability? = nil,
+        onDeviceStream: (@MainActor (String, String, Int) -> AsyncThrowingStream<String, Error>)? = nil,
+        onPartial: @escaping @MainActor (String) -> Void
     ) async -> String {
         let language = preferredLanguage(recentSubjects: recentSubjects)
-        if OnDeviceModel.availability == .available {
-            let prompt = buildPrompt(files: files, diffs: diffs, branch: branch, recentSubjects: recentSubjects)
-            let stream = OnDeviceModel.stream(
-                instructions: instructions(for: language),
-                prompt: prompt,
-                maximumResponseTokens: maxResponseTokens
-            )
+        let prompt = buildPrompt(files: files, diffs: diffs, branch: branch, recentSubjects: recentSubjects)
+        let resolvedAvailability = onDeviceAvailability ?? OnDeviceModel.availability
+
+        if resolvedAvailability == .available {
+            let stream = if let onDeviceStream {
+                onDeviceStream(instructions(for: language), prompt, maxResponseTokens)
+            } else {
+                OnDeviceModel.stream(
+                    instructions: instructions(for: language),
+                    prompt: prompt,
+                    maximumResponseTokens: maxResponseTokens
+                )
+            }
             var latest = ""
             do {
                 for try await partial in stream {
@@ -829,6 +850,33 @@ enum AgentGitCommitMessageGenerator {
             } catch {
                 logger.info("on-device commit message fallback: \(EnglishErrorText.describe(error), privacy: .public)")
             }
+        }
+
+        if !Task.isCancelled, let cliComplete {
+            let cliInstructions = instructions(for: language, forbidTools: true)
+            var latest = ""
+            let completed = await cliComplete(cliInstructions, prompt, maxResponseTokens) { partial in
+                let cleaned = sanitizeGeneratedMessage(partial)
+                if !cleaned.isEmpty {
+                    latest = cleaned
+                    onPartial(cleaned)
+                }
+            }
+            if Task.isCancelled {
+                return latest
+            }
+            if let completed {
+                let cleaned = sanitizeGeneratedMessage(completed)
+                if !cleaned.isEmpty {
+                    onPartial(cleaned)
+                    return cleaned
+                }
+            }
+            logger.info("agent CLI commit message fallback: unavailable or empty response")
+        }
+
+        if Task.isCancelled {
+            return ""
         }
         let fallback = fallbackMessage(files: files, diffs: diffs, language: language)
         onPartial(fallback)

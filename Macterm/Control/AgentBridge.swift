@@ -170,6 +170,8 @@ final class AgentBridge {
             case configReply
             case newConversationReply
             case permissionReply
+            case completeUpdate
+            case completeReply
         }
 
         let type: Kind
@@ -181,6 +183,8 @@ final class AgentBridge {
         var accepted: Bool?
         var configOptions: [ConfigOption]?
         var permissions: [PermissionRequest]?
+        var text: String?
+        var error: String?
     }
 
     private struct Command: Encodable {
@@ -193,6 +197,18 @@ final class AgentBridge {
         var value: String?
         var permissionId: String?
         var optionId: String?
+        var instructions: String?
+        var prompt: String?
+        var maxTokens: Int?
+    }
+
+    private struct PendingCompletion {
+        var hasAck = false
+        var latestText = ""
+        let responseTimeout: Duration
+        var onPartial: @MainActor (String) -> Void
+        var continuation: CheckedContinuation<String?, Never>
+        var timeoutTask: Task<Void, Never>?
     }
 
     private(set) var rows: [Row] = []
@@ -264,6 +280,7 @@ final class AgentBridge {
     private var pendingPermissionRequest: (id: UUID, permissionID: String)?
     private var permissionTimeout: Task<Void, Never>?
     private var exitTimeout: Task<Void, Never>?
+    private var pendingCompletions: [UUID: PendingCompletion] = [:]
     private var onClose: (() -> Void)?
     private static let maxFrameBytes = 24 * 1024 * 1024
 
@@ -344,6 +361,12 @@ final class AgentBridge {
         newConversationTimeout?.cancel()
         permissionTimeout?.cancel()
         exitTimeout?.cancel()
+        let completions = pendingCompletions
+        pendingCompletions.removeAll()
+        for entry in completions.values {
+            entry.timeoutTask?.cancel()
+            entry.continuation.resume(returning: nil)
+        }
         connection.cancel()
         onClose?()
         onClose = nil
@@ -491,6 +514,73 @@ final class AgentBridge {
             guard !Task.isCancelled, let self, !isClosed else { return }
             close()
         }
+    }
+
+    /// Runs an isolated one-shot text completion through the connected bridge
+    /// without altering the active conversation transcript.
+    func complete(
+        instructions: String,
+        prompt: String,
+        maximumResponseTokens: Int? = nil,
+        ackTimeout: Duration = .seconds(3),
+        responseTimeout: Duration = .seconds(30),
+        onPartial: @escaping @MainActor (String) -> Void
+    ) async -> String? {
+        guard isReady, !isClosed, !isExiting, !Task.isCancelled else { return nil }
+        let trimmedPrompt = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedPrompt.isEmpty,
+              instructions.utf8.count + prompt.utf8.count <= 128 * 1024
+        else { return nil }
+
+        let id = UUID()
+        return await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                guard isReady, !isClosed, !isExiting, !Task.isCancelled else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                let timeoutTask = Task { [weak self] in
+                    try? await Task.sleep(for: ackTimeout)
+                    guard !Task.isCancelled, let self else { return }
+                    self.timeoutCompletion(id: id)
+                }
+                pendingCompletions[id] = PendingCompletion(
+                    responseTimeout: responseTimeout,
+                    onPartial: onPartial,
+                    continuation: continuation,
+                    timeoutTask: timeoutTask
+                )
+                send(Command(
+                    type: "complete",
+                    id: id,
+                    instructions: instructions,
+                    prompt: prompt,
+                    maxTokens: maximumResponseTokens
+                ))
+            }
+        } onCancel: {
+            Task { @MainActor [weak self] in
+                self?.cancelCompletion(id: id)
+            }
+        }
+    }
+
+    private func cancelCompletion(id: UUID) {
+        guard let entry = pendingCompletions.removeValue(forKey: id) else { return }
+        entry.timeoutTask?.cancel()
+        if !isClosed, !isExiting {
+            send(Command(type: "cancelComplete", id: id))
+        }
+        entry.continuation.resume(returning: nil)
+    }
+
+    private func timeoutCompletion(id: UUID) {
+        guard let entry = pendingCompletions.removeValue(forKey: id) else { return }
+        entry.timeoutTask?.cancel()
+        if !isClosed, !isExiting {
+            send(Command(type: "cancelComplete", id: id))
+        }
+        entry.continuation.resume(returning: nil)
     }
 
     private func canSend(from surface: PaneSurface) -> Bool {
@@ -645,6 +735,34 @@ final class AgentBridge {
             pendingPermissionID = nil
             applyStatus(event)
             permissionRejected = event.accepted != true && pendingPermissions.contains { $0.id == pending.permissionID }
+        case .completeUpdate:
+            guard let id = event.id, var entry = pendingCompletions[id] else { return }
+            if !entry.hasAck {
+                entry.hasAck = true
+                entry.timeoutTask?.cancel()
+                let timeout = entry.responseTimeout
+                entry.timeoutTask = Task { [weak self] in
+                    try? await Task.sleep(for: timeout)
+                    guard !Task.isCancelled, let self else { return }
+                    self.timeoutCompletion(id: id)
+                }
+            }
+            if let text = event.text, !text.isEmpty {
+                entry.latestText = text
+                pendingCompletions[id] = entry
+                entry.onPartial(text)
+            } else {
+                pendingCompletions[id] = entry
+            }
+        case .completeReply:
+            guard let id = event.id, let entry = pendingCompletions.removeValue(forKey: id) else { return }
+            entry.timeoutTask?.cancel()
+            guard event.accepted == true else {
+                entry.continuation.resume(returning: nil)
+                return
+            }
+            let text = (event.text?.isEmpty == false ? event.text : nil) ?? (entry.latestText.isEmpty ? nil : entry.latestText)
+            entry.continuation.resume(returning: text)
         }
     }
 

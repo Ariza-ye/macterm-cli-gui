@@ -78,9 +78,27 @@ struct AgentPaneView: View {
                 }
             },
             content: {
-                AgentGitDiffSheet(workingDirectory: resolvedWorkingDirectory, appearance: appearance)
+                AgentGitDiffSheet(
+                    workingDirectory: resolvedWorkingDirectory,
+                    appearance: appearance,
+                    cliComplete: Self.makeGitDiffCLICompletion(for: bridge)
+                )
             }
         )
+    }
+
+    private static func makeGitDiffCLICompletion(
+        for bridge: AgentBridge
+    ) -> AgentGitCommitMessageGenerator.CLICompletionHandler {
+        { [weak bridge] instructions, prompt, maxTokens, onPartial in
+            guard let bridge else { return nil }
+            return await bridge.complete(
+                instructions: instructions,
+                prompt: prompt,
+                maximumResponseTokens: maxTokens,
+                onPartial: onPartial
+            )
+        }
     }
 
     private func header(appearance: AgentAppearance) -> some View {

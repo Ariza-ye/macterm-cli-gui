@@ -1174,6 +1174,110 @@ struct AgentBridgeTests {
         try await waitUntil { registry.bridge(for: pane) == nil && !bridge.isReady && !bridge.isExiting }
     }
 
+    // MARK: - Side-channel completion
+
+    @Test
+    func bridge_complete_streams_isolated_response_and_handles_reject_timeout_and_cancel() async throws {
+        let (_, registry, appState, projectStore) = makeHandler()
+        let pane = try seedPane(appState, projectStore)
+        let windowID = UUID()
+        defer {
+            registry.disconnect(pane: pane)
+            SurfaceRegistry.shared.destroySurfaces(of: pane)
+        }
+
+        let (socketPath, serverFD, cleanup) = try makeListeningBridgeSocket(prefix: "agent")
+        defer { cleanup() }
+
+        let bridge = AgentBridge(
+            provider: .antigravity,
+            path: socketPath,
+            conversation: "conv-complete",
+            token: UUID(),
+            windowID: windowID,
+            registry: registry
+        )
+        registry.bind(bridge, toSession: pane.sessionName)
+
+        let peerFD = try await acceptClient(on: serverFD)
+        var peerClosed = false
+        defer {
+            if !peerClosed { close(peerFD) }
+        }
+        _ = try await readLine(from: peerFD) // hello
+
+        try writeFrame(["type": "snapshot", "conversation": "conv-complete"], to: peerFD)
+        try writeFrame(["type": "snapshotEnd", "busy": false, "waiting": false], to: peerFD)
+        try await waitUntil { bridge.isReady }
+
+        // 1. Successful streamed completion does not modify conversation rows.
+        var partials: [String] = []
+        let successTask = Task {
+            await bridge.complete(
+                instructions: "Write a commit message.",
+                prompt: "File: Foo.swift\n+let x = 1",
+                maximumResponseTokens: 160,
+                onPartial: { partials.append($0) }
+            )
+        }
+        let reqLine1 = try await readLine(from: peerFD)
+        let req1 = try #require(JSONSerialization.jsonObject(with: Data(reqLine1.utf8)) as? [String: Any])
+        #expect(req1["type"] as? String == "complete")
+        #expect(req1["instructions"] as? String == "Write a commit message.")
+        #expect(req1["prompt"] as? String == "File: Foo.swift\n+let x = 1")
+        #expect(req1["maxTokens"] as? Int == 160)
+        let reqID1 = try #require(req1["id"] as? String)
+
+        try writeFrame(["type": "completeUpdate", "id": reqID1, "text": ""], to: peerFD)
+        try writeFrame(["type": "completeUpdate", "id": reqID1, "text": "Add x"], to: peerFD)
+        try writeFrame(["type": "completeReply", "id": reqID1, "accepted": true, "text": "Add x constant"], to: peerFD)
+
+        let result1 = await successTask.value
+        #expect(result1 == "Add x constant")
+        #expect(partials == ["Add x"])
+        #expect(bridge.rows.isEmpty)
+        #expect(!bridge.isBusy)
+
+        // 2. Rejected completion returns nil.
+        let rejectTask = Task {
+            await bridge.complete(instructions: "Rules", prompt: "Diff", onPartial: { _ in })
+        }
+        let reqLine2 = try await readLine(from: peerFD)
+        let req2 = try #require(JSONSerialization.jsonObject(with: Data(reqLine2.utf8)) as? [String: Any])
+        let reqID2 = try #require(req2["id"] as? String)
+        try writeFrame(["type": "completeReply", "id": reqID2, "accepted": false, "error": "busy"], to: peerFD)
+        #expect(await rejectTask.value == nil)
+
+        // 3. Unacknowledged request times out quickly (legacy bridge) and sends cancelComplete.
+        let timeoutTask = Task {
+            await bridge.complete(
+                instructions: "Rules",
+                prompt: "Diff",
+                ackTimeout: .milliseconds(100),
+                responseTimeout: .seconds(5),
+                onPartial: { _ in }
+            )
+        }
+        let reqLine3 = try await readLine(from: peerFD)
+        let req3 = try #require(JSONSerialization.jsonObject(with: Data(reqLine3.utf8)) as? [String: Any])
+        let reqID3 = try #require(req3["id"] as? String)
+        #expect(await timeoutTask.value == nil)
+
+        let cancelLine3 = try await readLine(from: peerFD)
+        let cancelCmd3 = try #require(JSONSerialization.jsonObject(with: Data(cancelLine3.utf8)) as? [String: Any])
+        #expect(cancelCmd3["type"] as? String == "cancelComplete")
+        #expect(cancelCmd3["id"] as? String == reqID3)
+
+        // 4. Closing the socket wakes up an in-flight completion with nil.
+        let disconnectTask = Task {
+            await bridge.complete(instructions: "Rules", prompt: "Diff", onPartial: { _ in })
+        }
+        _ = try await readLine(from: peerFD)
+        close(peerFD)
+        peerClosed = true
+        #expect(await disconnectTask.value == nil)
+    }
+
     private func makeListeningBridgeSocket(prefix: String) throws -> (String, Int32, () -> Void) {
         let token = String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(6))
         let directory = "/tmp/macterm-\(prefix)-\(token)"

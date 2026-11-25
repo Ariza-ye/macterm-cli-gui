@@ -237,6 +237,87 @@ struct AgentGitDiffTests {
         #expect(multiEn.contains("- Modify Macterm/Agent/AgentSettings.swift"))
     }
 
+    @Test
+    func generate_falls_back_from_on_device_to_cli_and_then_to_deterministic_summary() async {
+        let modified = AgentGitFileChange(
+            path: "Macterm/Agent/AgentGitDiff.swift",
+            originalPath: nil,
+            indexStatus: ".",
+            workTreeStatus: "M",
+            isUntracked: false,
+            isConflicted: false,
+            additions: 12,
+            deletions: 2
+        )
+
+        // 1. On-device model wins when available and succeeds; CLI fallback is not called.
+        var cliCalledWhenOnDeviceSucceeded = false
+        var onDevicePartials: [String] = []
+        let onDeviceResult = await AgentGitCommitMessageGenerator.generate(
+            files: [modified],
+            diffs: [:],
+            branch: "main",
+            recentSubjects: ["Fix sidebar glitch"],
+            cliComplete: { _, _, _, _ in
+                cliCalledWhenOnDeviceSucceeded = true
+                return "Should not be used"
+            },
+            onDeviceAvailability: .available,
+            onDeviceStream: { _, _, _ in
+                AsyncThrowingStream { continuation in
+                    continuation.yield("Add on-device summary")
+                    continuation.finish()
+                }
+            },
+            onPartial: { onDevicePartials.append($0) }
+        )
+        #expect(onDeviceResult == "Add on-device summary")
+        #expect(onDevicePartials == ["Add on-device summary"])
+        #expect(!cliCalledWhenOnDeviceSucceeded)
+
+        // 2. When on-device model is unavailable, falls back to the active CLI bridge.
+        var capturedInstructions = ""
+        var cliPartials: [String] = []
+        let cliResult = await AgentGitCommitMessageGenerator.generate(
+            files: [modified],
+            diffs: [:],
+            branch: "gui",
+            recentSubjects: ["修复提交面板问题"],
+            cliComplete: { instructions, prompt, maxTokens, onPartial in
+                capturedInstructions = instructions
+                #expect(prompt.contains("Macterm/Agent/AgentGitDiff.swift"))
+                #expect(maxTokens == AgentGitCommitMessageGenerator.maxResponseTokens)
+                onPartial("支持 CLI 回退")
+                return "```text\n提交信息：支持 CLI 回退生成提交信息\n```"
+            },
+            onDeviceAvailability: .unsupported,
+            onPartial: { cliPartials.append($0) }
+        )
+        #expect(capturedInstructions.contains("Do not call any tools"))
+        #expect(capturedInstructions.contains("Simplified Chinese"))
+        #expect(cliPartials == ["支持 CLI 回退", "支持 CLI 回退生成提交信息"])
+        #expect(cliResult == "支持 CLI 回退生成提交信息")
+
+        // 3. When on-device model fails and CLI returns nil, falls back to deterministic summary.
+        var fallbackPartials: [String] = []
+        let fallbackResult = await AgentGitCommitMessageGenerator.generate(
+            files: [modified],
+            diffs: [:],
+            branch: "gui",
+            recentSubjects: ["修复提交面板问题"],
+            cliComplete: { _, _, _, _ in nil },
+            onDeviceAvailability: .available,
+            onDeviceStream: { _, _, _ in
+                AsyncThrowingStream { continuation in
+                    continuation.finish(throwing: OnDeviceModel.Failure.other)
+                }
+            },
+            onPartial: { fallbackPartials.append($0) }
+        )
+        #expect(fallbackResult == "更新 AgentGitDiff.swift")
+        #expect(fallbackPartials == ["更新 AgentGitDiff.swift"])
+    }
+
     // MARK: - End-to-End Git Service against temporary repositories
 
     @Test

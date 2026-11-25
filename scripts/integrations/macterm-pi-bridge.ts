@@ -326,6 +326,7 @@ function startBridge(
     const activeMessages = new Map<string, string>();
     const toolArguments = new Map<string, string>();
     const modelsByKey = new Map<string, PiModel>();
+    const activeCompletions = new Map<string, { controller: AbortController; owner: Socket }>();
 
     const state = () => ({ busy: !ctx.isIdle(), waiting });
 
@@ -464,6 +465,98 @@ function startBridge(
         emit({ type: "snapshotEnd", ...state(), configOptions: buildConfigOptions() });
     }
 
+    function cancelCompletion(id: string) {
+        const entry = activeCompletions.get(id);
+        if (!entry) return;
+        activeCompletions.delete(id);
+        entry.controller.abort();
+    }
+
+    function cancelCompletionsForSocket(socket?: Socket) {
+        for (const [id, entry] of activeCompletions) {
+            if (!socket || entry.owner === socket) {
+                activeCompletions.delete(id);
+                entry.controller.abort();
+            }
+        }
+    }
+
+    async function runCompletion(
+        command: { id?: string; instructions?: unknown; prompt?: unknown; maxTokens?: unknown },
+        owner: Socket,
+    ) {
+        const id = command.id;
+        if (typeof id !== "string" || !id) return;
+        const reply = (accepted: boolean, extra: Record<string, unknown> = {}) => {
+            if (owner === peer) emit({ type: "completeReply", id, accepted, ...extra });
+        };
+        const instructions = typeof command.instructions === "string" ? command.instructions.trim() : "";
+        const promptText = typeof command.prompt === "string" ? command.prompt.trim() : "";
+        const maxTokens = typeof command.maxTokens === "number" && Number.isFinite(command.maxTokens) && command.maxTokens > 0
+            ? Math.min(Math.floor(command.maxTokens), 4096)
+            : undefined;
+        if (closed || !promptText || activeCompletions.size >= 2 || activeCompletions.has(id)
+            || Buffer.byteLength(instructions) + Buffer.byteLength(promptText) > 128 * 1024) {
+            reply(false, { error: "unavailable" });
+            return;
+        }
+        const model = ctx.model ?? ctx.modelRegistry.getAvailable()[0];
+        if (!model || typeof ctx.modelRegistry?.streamSimple !== "function") {
+            reply(false, { error: "no_model" });
+            return;
+        }
+
+        const controller = new AbortController();
+        activeCompletions.set(id, { controller, owner });
+        if (owner === peer) emit({ type: "completeUpdate", id, text: "" });
+
+        let text = "";
+        let failed = false;
+        let errorMessage = "";
+        try {
+            const stream = ctx.modelRegistry.streamSimple(
+                model,
+                {
+                    ...(instructions ? { systemPrompt: instructions } : {}),
+                    messages: [{ role: "user", content: promptText, timestamp: Date.now() }],
+                },
+                {
+                    ...(maxTokens !== undefined ? { maxTokens } : {}),
+                    temperature: 0.3,
+                    signal: controller.signal,
+                },
+            );
+            for await (const event of stream) {
+                if (controller.signal.aborted || closed) break;
+                if (event.type === "text_delta" && typeof event.delta === "string") {
+                    text = (text + stripVTControlCharacters(event.delta)).slice(0, 16 * 1024);
+                    if (owner === peer) emit({ type: "completeUpdate", id, text });
+                } else if (event.type === "done" && !text.trim()) {
+                    const finalText = textContent(event.message.content);
+                    if (finalText) {
+                        text = finalText.slice(0, 16 * 1024);
+                    }
+                } else if (event.type === "error") {
+                    failed = true;
+                    errorMessage = event.error?.errorMessage || "model_error";
+                }
+            }
+            if (controller.signal.aborted || closed) return;
+            if (!failed && text.trim()) {
+                reply(true, { text });
+            } else {
+                reply(false, { error: errorMessage || "empty" });
+            }
+        } catch (error) {
+            if (!controller.signal.aborted && !closed) {
+                const message = error instanceof Error ? error.message : "completion_failed";
+                reply(false, { error: stripVTControlCharacters(message) });
+            }
+        } finally {
+            activeCompletions.delete(id);
+        }
+    }
+
     const server = createServer((socket) => {
         if (closed || connected.size >= 4) { socket.destroy(); return; }
         connected.add(socket);
@@ -472,6 +565,7 @@ function startBridge(
         socket.on("error", () => socket.destroy());
         socket.on("close", () => {
             connected.delete(socket);
+            cancelCompletionsForSocket(socket);
             if (peer === socket) peer = undefined;
             if (pending?.owner === socket) sendReply(false);
             if (pendingNewConversation?.owner === socket) sendNewConversationReply(false);
@@ -492,6 +586,9 @@ function startBridge(
                     attachments?: unknown;
                     configId?: string;
                     value?: string;
+                    instructions?: unknown;
+                    prompt?: unknown;
+                    maxTokens?: unknown;
                 };
                 try { command = JSON.parse(line); } catch { socket.destroy(); return; }
                 if (!command || typeof command !== "object") { socket.destroy(); return; }
@@ -582,6 +679,10 @@ function startBridge(
                     } catch {
                         sendNewConversationReply(false);
                     }
+                } else if (command.type === "complete" && typeof command.id === "string") {
+                    void runCompletion(command, socket);
+                } else if (command.type === "cancelComplete" && typeof command.id === "string") {
+                    cancelCompletion(command.id);
                 } else if (command.type === "send" && typeof command.id === "string") {
                     const text = typeof command.text === "string" ? command.text : "";
                     const normalized = normalizeAttachments(command.attachments);
@@ -654,6 +755,7 @@ function startBridge(
     function close() {
         if (closed) return;
         closed = true;
+        cancelCompletionsForSocket();
         if (currentMode === "plan") {
             applyMode("edit");
         }

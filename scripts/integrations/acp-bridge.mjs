@@ -500,6 +500,8 @@ export async function runAcpBridge(config, runtime = {}) {
     const rows = new Map();
     const sockets = new Set();
     const permissions = new Map();
+    const completions = new Map();
+    const completionBySession = new Map();
     let nextID = 0;
     let sessionID;
     let turn;
@@ -762,6 +764,27 @@ export async function runAcpBridge(config, runtime = {}) {
         let frame;
         try { frame = JSON.parse(line); } catch { return; }
         const { id, method, params, result, error } = frame;
+        const completion = typeof params?.sessionId === "string"
+            ? completionBySession.get(params.sessionId)
+            : undefined;
+        if (completion) {
+            if (method === "session/update") {
+                const chunk = params?.update;
+                if (chunk?.sessionUpdate === "agent_message_chunk"
+                    && chunk?.content?.type === "text"
+                    && typeof chunk.content.text === "string") {
+                    completion.text = (completion.text + clean(chunk.content.text)).slice(0, 16 * 1024);
+                    if (!completion.cancelled && completion.owner === peer) {
+                        emit({ type: "completeUpdate", id: completion.id, text: completion.text });
+                    }
+                }
+            } else if (method === "session/request_permission" && id !== undefined) {
+                rpc({ id, result: { outcome: { outcome: "cancelled" } } });
+            } else if (method && id !== undefined) {
+                rpc({ id, error: { code: -32601, message: "This client does not support the request." } });
+            }
+            return;
+        }
         if (method === "session/update" && (!sessionID || params?.sessionId === sessionID)) {
             update(params);
         } else if (method === "session/request_permission" && id !== undefined && params?.sessionId === sessionID) {
@@ -912,6 +935,101 @@ export async function runAcpBridge(config, runtime = {}) {
         }
     }
 
+    async function runCompletion(command, owner) {
+        const id = command.id;
+        const instructions = typeof command.instructions === "string" ? command.instructions.trim() : "";
+        const promptText = typeof command.prompt === "string" ? command.prompt.trim() : "";
+        const reply = (accepted, extra = {}) => {
+            if (owner && owner === peer) emit({ type: "completeReply", id, accepted, ...extra });
+        };
+        if (closed || !sessionID || !promptText || completions.size >= 2 || completions.has(id)
+            || Buffer.byteLength(instructions) + Buffer.byteLength(promptText) > 128 * 1024) {
+            reply(false, { error: "unavailable" });
+            return;
+        }
+        const entry = { id, owner, sessionId: undefined, text: "", cancelled: false };
+        completions.set(id, entry);
+        if (owner === peer) emit({ type: "completeUpdate", id, text: "" });
+        try {
+            const sessionResult = await request("session/new", { cwd, mcpServers: [] });
+            const tempSessionId = sessionResult?.sessionId;
+            if (typeof tempSessionId !== "string" || !tempSessionId) {
+                throw new Error(`${config.name} did not provide a completion session ID.`);
+            }
+            entry.sessionId = tempSessionId;
+            completionBySession.set(tempSessionId, entry);
+            if (entry.cancelled || closed) return;
+
+            const currentModelOption = configOptions.find(item => item.category === "model" || item.id === "model");
+            if (currentModelOption?.currentValue) {
+                const tempConfig = normalizeConfigOptions(
+                    sessionResult?.configOptions,
+                    sessionResult?.models,
+                    sessionResult?.modes,
+                );
+                const tempModelOption = tempConfig.configOptions.find(
+                    item => item.category === "model" || item.id === "model",
+                );
+                if (tempModelOption
+                    && tempModelOption.currentValue !== currentModelOption.currentValue
+                    && tempModelOption.options.some(choice => choice.value === currentModelOption.currentValue)) {
+                    try {
+                        if (tempConfig.usesLegacyModels && tempModelOption.id === "model") {
+                            await request("session/set_model", {
+                                sessionId: tempSessionId,
+                                modelId: currentModelOption.currentValue,
+                            });
+                        } else {
+                            await request("session/set_config_option", {
+                                sessionId: tempSessionId,
+                                configId: tempModelOption.id,
+                                value: currentModelOption.currentValue,
+                            });
+                        }
+                    } catch {}
+                }
+            }
+            if (entry.cancelled || closed) return;
+
+            const combinedPrompt = instructions ? `${instructions}\n\n${promptText}` : promptText;
+            await request("session/prompt", {
+                sessionId: tempSessionId,
+                prompt: [{ type: "text", text: combinedPrompt }],
+            });
+            if (entry.cancelled || closed) return;
+            const trimmed = entry.text.trim();
+            if (trimmed) {
+                reply(true, { text: entry.text });
+            } else {
+                reply(false, { error: "empty" });
+            }
+        } catch (error) {
+            if (!entry.cancelled && !closed) {
+                reply(false, { error: clean(error?.message ?? "completion_failed") });
+            }
+        } finally {
+            completions.delete(id);
+            if (entry.sessionId) completionBySession.delete(entry.sessionId);
+        }
+    }
+
+    function cancelCompletion(id) {
+        const entry = completions.get(id);
+        if (!entry) return;
+        entry.cancelled = true;
+        if (entry.sessionId && !closed) {
+            rpc({ method: "session/cancel", params: { sessionId: entry.sessionId } });
+        }
+    }
+
+    function cancelCompletionsForSocket(socket) {
+        for (const entry of completions.values()) {
+            if (!socket || entry.owner === socket) {
+                cancelCompletion(entry.id);
+            }
+        }
+    }
+
     terminal.on("line", line => {
         if (permissions.size) {
             const req = permissions.values().next().value;
@@ -942,6 +1060,7 @@ export async function runAcpBridge(config, runtime = {}) {
         socket.on("error", () => socket.destroy());
         socket.on("close", () => {
             sockets.delete(socket);
+            cancelCompletionsForSocket(socket);
             if (peer === socket) peer = undefined;
         });
         const input = createInterface({ input: socket, crlfDelay: Infinity });
@@ -968,6 +1087,10 @@ export async function runAcpBridge(config, runtime = {}) {
                 void newConversation(socket, command.id);
             } else if (command?.type === "permissionReply" && typeof command.id === "string") {
                 resolvePermission(command.permissionId, command.optionId, socket, command.id);
+            } else if (command?.type === "complete" && typeof command.id === "string") {
+                void runCompletion(command, socket);
+            } else if (command?.type === "cancelComplete" && typeof command.id === "string") {
+                cancelCompletion(command.id);
             } else if (command?.type === "stop") {
                 stop();
             } else if (command?.type === "exit") {
@@ -1035,6 +1158,9 @@ export async function runAcpBridge(config, runtime = {}) {
     function close() {
         if (closed) return;
         closed = true;
+        cancelCompletionsForSocket();
+        completions.clear();
+        completionBySession.clear();
         clearTimeout(startup);
         clearInterval(retry);
         registration?.destroy();

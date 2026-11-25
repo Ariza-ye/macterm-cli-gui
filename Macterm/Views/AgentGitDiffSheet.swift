@@ -37,12 +37,17 @@ final class AgentGitDiffState {
     var selectedPath: String?
     var commitMessage = ""
 
+    @ObservationIgnored private let cliComplete: AgentGitCommitMessageGenerator.CLICompletionHandler?
     @ObservationIgnored private var hasInitializedSelection = false
     @ObservationIgnored private var activeDiffTask: Task<Void, Never>?
     @ObservationIgnored private var activeGenerateTask: Task<Void, Never>?
 
-    init(workingDirectory: String?) {
+    init(
+        workingDirectory: String?,
+        cliComplete: AgentGitCommitMessageGenerator.CLICompletionHandler? = nil
+    ) {
         self.workingDirectory = workingDirectory
+        self.cliComplete = cliComplete
     }
 
     var files: [AgentGitFileChange] {
@@ -195,6 +200,7 @@ final class AgentGitDiffState {
                 diffs: gatheredDiffs,
                 branch: snapshot.branch,
                 recentSubjects: recentSubjects,
+                cliComplete: cliComplete,
                 onPartial: { [weak self] partial in
                     self?.commitMessage = partial
                 }
@@ -293,9 +299,16 @@ struct AgentGitDiffSheet: View {
     @State private var state: AgentGitDiffState
     @Environment(\.dismiss) private var dismiss
 
-    init(workingDirectory: String?, appearance: AgentAppearance) {
+    init(
+        workingDirectory: String?,
+        appearance: AgentAppearance,
+        cliComplete: AgentGitCommitMessageGenerator.CLICompletionHandler? = nil
+    ) {
         self.appearance = appearance
-        _state = State(initialValue: AgentGitDiffState(workingDirectory: workingDirectory))
+        _state = State(initialValue: AgentGitDiffState(
+            workingDirectory: workingDirectory,
+            cliComplete: cliComplete
+        ))
     }
 
     var body: some View {
