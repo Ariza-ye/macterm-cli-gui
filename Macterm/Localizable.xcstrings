@@ -669,6 +669,22 @@
         }
       }
     },
+    "(%lld changed)" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "(%lld개 변경됨)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "（%lld 个变更）"
+          }
+        }
+      }
+    },
     "1 process is still running. Quit anyway?" : {
       "localizations" : {
         "ko" : {
@@ -1957,6 +1973,38 @@
         }
       }
     },
+    "Binary file" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "바이너리 파일"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "二进制文件"
+          }
+        }
+      }
+    },
+    "Binary file — diff preview is not available." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "바이너리 파일 — 차이점 미리 보기를 사용할 수 없습니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "二进制文件 — 无法预览差异。"
+          }
+        }
+      }
+    },
     "Blue" : {
       "comment" : "Project color tag",
       "localizations" : {
@@ -2406,6 +2454,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "在行的菜单中更改顺序。侧边栏的每个分组在下方都有自己的部分。"
+          }
+        }
+      }
+    },
+    "Changed Files" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "변경된 파일"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已修改的文件"
           }
         }
       }
@@ -2968,6 +3032,70 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "命令面板"
+          }
+        }
+      }
+    },
+    "Commit" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "커밋"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "提交"
+          }
+        }
+      }
+    },
+    "Commit (%lld)" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "커밋 (%lld)"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "提交 (%lld)"
+          }
+        }
+      }
+    },
+    "Commit Message" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "커밋 메시지"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "提交信息"
+          }
+        }
+      }
+    },
+    "Committed changes." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "변경 사항을 커밋했습니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已提交变更。"
           }
         }
       }
@@ -3558,6 +3686,22 @@
         }
       }
     },
+    "Deselect All" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "모두 선택 해제"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "取消全选"
+          }
+        }
+      }
+    },
     "Desktop Widget" : {
       "localizations" : {
         "ko" : {
@@ -3606,6 +3750,22 @@
         }
       }
     },
+    "Diff output was truncated to keep the preview responsive." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "미리 보기 응답성을 유지하기 위해 차이점 출력이 잘렸습니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "为保持预览流畅，差异内容已截断。"
+          }
+        }
+      }
+    },
     "Directories" : {
       "comment" : "Command palette: the section of folder rows in path mode",
       "localizations" : {
@@ -3635,6 +3795,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "目录"
+          }
+        }
+      }
+    },
+    "Dismiss message" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "메시지 닫기"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "关闭提示"
           }
         }
       }
@@ -3866,6 +4042,22 @@
         }
       }
     },
+    "Enter a commit message before committing." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "커밋하기 전에 커밋 메시지를 입력하십시오."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "提交前请先输入提交信息。"
+          }
+        }
+      }
+    },
     "Enter the ACP v1 stdio command that Macterm runs for this terminal command." : {
       "localizations" : {
         "ko" : {
@@ -3894,6 +4086,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "每次"
+          }
+        }
+      }
+    },
+    "Exclude %@" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 제외"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "取消勾选 %@"
           }
         }
       }
@@ -4470,6 +4678,38 @@
         }
       }
     },
+    "Generate" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "생성"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "生成"
+          }
+        }
+      }
+    },
+    "Generate a commit message for the selected files" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "선택한 파일의 커밋 메시지 생성"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "为已勾选的文件生成提交信息"
+          }
+        }
+      }
+    },
     "Get ${detail} from ${pane}" : {
       "localizations" : {
         "ko" : {
@@ -4626,6 +4866,70 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Git"
+          }
+        }
+      }
+    },
+    "Git Diff" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Git Diff"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Git Diff"
+          }
+        }
+      }
+    },
+    "Git command exited with status %d." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Git 명령이 상태 %d(으)로 종료되었습니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Git 命令退出，状态码 %d。"
+          }
+        }
+      }
+    },
+    "Git command failed to start or timed out." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Git 명령을 시작하지 못했거나 시간이 초과되었습니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Git 命令启动失败或超时。"
+          }
+        }
+      }
+    },
+    "Git is not installed on this Mac." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 Mac에 Git이 설치되어 있지 않습니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此 Mac 未安装 Git。"
           }
         }
       }
@@ -4856,6 +5160,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "如果应用此布局，Macterm 会关闭部分窗格并结束其中的进程。"
+          }
+        }
+      }
+    },
+    "Include %@" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "%@ 포함"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "勾选 %@"
           }
         }
       }
@@ -5535,6 +5855,38 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "加载更多"
+          }
+        }
+      }
+    },
+    "Loading Git changes…" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Git 변경 사항을 불러오는 중…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在加载 Git 变更…"
+          }
+        }
+      }
+    },
+    "Loading diff…" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "차이점을 불러오는 중…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在加载差异…"
           }
         }
       }
@@ -6784,6 +7136,22 @@
         }
       }
     },
+    "No Git remote is configured for this repository." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 저장소에 구성된 Git 원격이 없습니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "当前仓库未配置 Git 远程仓库。"
+          }
+        }
+      }
+    },
     "No additional config files." : {
       "localizations" : {
         "ko" : {
@@ -6992,6 +7360,22 @@
         }
       }
     },
+    "No modified files to display" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "표시할 변경된 파일이 없습니다"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有可显示的修改文件"
+          }
+        }
+      }
+    },
     "No node named %@" : {
       "localizations" : {
         "ko" : {
@@ -7132,6 +7516,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "没有可输入的终端窗格"
+          }
+        }
+      }
+    },
+    "No textual diff for this file." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "이 파일의 텍스트 차이점이 없습니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "该文件没有可显示的文本差异。"
           }
         }
       }
@@ -8671,6 +9071,54 @@
         }
       }
     },
+    "Pull" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "풀"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "拉取"
+          }
+        }
+      }
+    },
+    "Pull latest changes from remote" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "원격에서 최신 변경 사항 가져오기"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "从远程拉取最新代码"
+          }
+        }
+      }
+    },
+    "Pulled from remote." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "원격에서 가져왔습니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已从远程拉取代码。"
+          }
+        }
+      }
+    },
     "Purple" : {
       "comment" : "Project color tag",
       "localizations" : {
@@ -8684,6 +9132,54 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "紫色"
+          }
+        }
+      }
+    },
+    "Push" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "푸시"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "推送"
+          }
+        }
+      }
+    },
+    "Push local commits to remote" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "로컬 커밋을 원격으로 푸시"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "推送本地提交到远程"
+          }
+        }
+      }
+    },
+    "Pushed to remote." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "원격으로 푸시했습니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已推送到远程。"
           }
         }
       }
@@ -8944,6 +9440,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "红色"
+          }
+        }
+      }
+    },
+    "Refresh Git status" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Git 상태 새로 고침"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "刷新 Git 状态"
           }
         }
       }
@@ -9737,6 +10249,22 @@
         }
       }
     },
+    "Review Git changes, commit, push, and pull" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Git 변경 사항 검토, 커밋, 푸시 및 풀"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "查看 Git 变更、提交、推送与拉取"
+          }
+        }
+      }
+    },
     "Right" : {
       "comment" : "Settings → Quick Terminal: the right end of the X position slider",
       "localizations" : {
@@ -10290,6 +10818,22 @@
         }
       }
     },
+    "Select All" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "모두 선택"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "全选"
+          }
+        }
+      }
+    },
     "Select Mode" : {
       "comment" : "Pill on a pane in Helix copy mode",
       "localizations" : {
@@ -10303,6 +10847,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "选择模式"
+          }
+        }
+      }
+    },
+    "Select a file to inspect its diff" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "차이점을 확인할 파일을 선택하십시오"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "选择一个文件以查看差异"
           }
         }
       }
@@ -10335,6 +10895,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "选择项目文件夹"
+          }
+        }
+      }
+    },
+    "Select at least one file to commit." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "커밋할 파일을 하나 이상 선택하십시오."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请至少勾选一个要提交的文件。"
           }
         }
       }
@@ -11894,6 +12470,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "命令为空。"
+          }
+        }
+      }
+    },
+    "The current directory is not a Git repository." : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "현재 디렉터리는 Git 저장소가 아닙니다."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "当前目录不是 Git 仓库。"
           }
         }
       }
@@ -13524,6 +14116,22 @@
         }
       }
     },
+    "Working tree clean" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "작업 트리가 깨끗합니다"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "工作区干净"
+          }
+        }
+      }
+    },
     "Worktrees" : {
       "localizations" : {
         "ko" : {
@@ -13536,6 +14144,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "工作树"
+          }
+        }
+      }
+    },
+    "Write a commit message…" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "커밋 메시지 입력…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "输入提交信息…"
           }
         }
       }

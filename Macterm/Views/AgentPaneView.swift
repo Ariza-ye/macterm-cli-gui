@@ -9,6 +9,7 @@ struct AgentPaneView: View {
     let focus: AgentPaneFocus
     let showTerminal: () -> Void
     @State private var previewContext: AgentAttachmentPreviewContext?
+    @State private var isGitDiffPresented = false
     @State private var isDropTargeted = false
 
     private var appearanceSettings: AgentAppearanceSettings { .shared }
@@ -68,6 +69,17 @@ struct AgentPaneView: View {
         .sheet(item: $previewContext) { context in
             AgentAttachmentPreviewSheet(context: context, appearance: appearance)
         }
+        .sheet(
+            isPresented: $isGitDiffPresented,
+            onDismiss: {
+                if let input = focus.input {
+                    input.window?.makeFirstResponder(input)
+                }
+            },
+            content: {
+                AgentGitDiffSheet(workingDirectory: resolvedWorkingDirectory, appearance: appearance)
+            }
+        )
     }
 
     private func header(appearance: AgentAppearance) -> some View {
@@ -101,6 +113,16 @@ struct AgentPaneView: View {
             } else if bridge.isBusy {
                 ProgressView().controlSize(.mini).accessibilityLabel(Text("Agent is working"))
             }
+            Button {
+                isGitDiffPresented = true
+            } label: {
+                Label("Git Diff", systemImage: "arrow.triangle.branch")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .fixedSize()
+            .pointingHandCursor()
+            .help(Text("Review Git changes, commit, push, and pull"))
             Button {
                 bridge.newConversation(from: surface)
                 if let input = focus.input {
@@ -318,6 +340,16 @@ struct AgentPaneView: View {
         } else if bridge.isDraftTooLong {
             Text("The message is too long.").foregroundStyle(MactermTheme.failure)
         }
+    }
+
+    private var resolvedWorkingDirectory: String? {
+        if let live = surface.pane.liveLocalWorkingDirectory(), !live.isEmpty {
+            return live
+        }
+        if case let .local(path)? = ProjectPath.parse(surface.pane.projectPath) {
+            return ProjectPath.canonicalLocal(path)
+        }
+        return nil
     }
 
     private var canSubmit: Bool {
