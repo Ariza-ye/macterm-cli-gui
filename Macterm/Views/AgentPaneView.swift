@@ -1414,8 +1414,6 @@ private struct AgentToolGroup: View {
                         .lineLimit(1)
                         .foregroundStyle(MactermTheme.fgMuted)
                     ProgressView().controlSize(.mini).accessibilityLabel(Text("Agent is working"))
-                } else if rows.contains(where: { $0.status == .failed }) {
-                    Label("Failed", systemImage: "exclamationmark.circle").foregroundStyle(MactermTheme.failure)
                 } else {
                     Image(systemName: "checkmark").foregroundStyle(MactermTheme.fgMuted)
                         .accessibilityLabel(Text("Completed"))
