@@ -8,6 +8,7 @@ struct AgentPaneView: View {
     let surface: PaneSurface
     let focus: AgentPaneFocus
     let showTerminal: () -> Void
+    let closeAgent: () -> Void
     @State private var previewContext: AgentAttachmentPreviewContext?
     @State private var isGitDiffPresented = false
     @State private var isDropTargeted = false
@@ -41,7 +42,7 @@ struct AgentPaneView: View {
                         request: permission,
                         remainingCount: bridge.pendingPermissions.count - 1,
                         isPending: bridge.pendingPermissionID == permission.id,
-                        isDisabled: surface.isReadOnly || !bridge.isReady || bridge.pendingPermissionID != nil,
+                        isDisabled: surface.isReadOnly || !bridge.isReady || bridge.isExiting || bridge.pendingPermissionID != nil,
                         isRejected: bridge.permissionRejected,
                         appearance: appearance,
                         onSelect: { optionID in
@@ -152,6 +153,20 @@ struct AgentPaneView: View {
             .fixedSize()
             .pointingHandCursor()
             .help(HotkeyRegistry.tooltip(AppCommand.agentShowTerminal.title, for: .agentShowTerminal))
+            Button(action: closeAgent) {
+                if bridge.isExiting {
+                    ProgressView().controlSize(.mini)
+                } else {
+                    Image(systemName: "xmark")
+                }
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .disabled(!canExitAgent)
+            .fixedSize()
+            .pointingHandCursor(canExitAgent)
+            .help(Text("Close Agent GUI and exit the agent CLI"))
+            .accessibilityLabel(Text("Close Agent"))
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
@@ -162,7 +177,7 @@ struct AgentPaneView: View {
             if !bridge.draftAttachments.isEmpty {
                 AgentComposerAttachmentsBar(
                     attachments: bridge.draftAttachments,
-                    isDisabled: surface.isReadOnly || bridge.pendingSend != nil,
+                    isDisabled: surface.isReadOnly || bridge.isExiting || bridge.pendingSend != nil,
                     appearance: appearance,
                     onPreview: { attachment in
                         previewContext = AgentAttachmentPreviewContext(
@@ -179,7 +194,7 @@ struct AgentPaneView: View {
                 text: $bridge.draft,
                 placeholder: String(localized: "Write a message…"),
                 focus: focus,
-                isEditable: !surface.isReadOnly,
+                isEditable: !surface.isReadOnly && !bridge.isExiting,
                 font: appearance.bodyNSFont(),
                 minHeight: appearance.composerMinHeight,
                 maxHeight: maxEditorHeight,
@@ -204,7 +219,7 @@ struct AgentPaneView: View {
                 }
                 Spacer(minLength: 4)
                 if bridge.isBusy {
-                    let canStop = !surface.isReadOnly && bridge.isReady
+                    let canStop = !surface.isReadOnly && bridge.isReady && !bridge.isExiting
                     Button {
                         bridge.stop(from: surface)
                     } label: {
@@ -245,7 +260,7 @@ struct AgentPaneView: View {
     }
 
     private var addAttachmentButton: some View {
-        let canAttach = !surface.isReadOnly && bridge.pendingSend == nil
+        let canAttach = !surface.isReadOnly && !bridge.isExiting && bridge.pendingSend == nil
         return Menu {
             Button {
                 pickAttachments(mode: .imagesOnly)
@@ -289,8 +304,12 @@ struct AgentPaneView: View {
     }
 
     private var canStartAction: Bool {
-        !surface.isReadOnly && bridge.isReady && !bridge.isBusy && !bridge.isWaiting
+        !surface.isReadOnly && bridge.isReady && !bridge.isExiting && !bridge.isBusy && !bridge.isWaiting
             && bridge.pendingSend == nil && bridge.pendingConfigID == nil && bridge.pendingNewConversation == nil
+    }
+
+    private var canExitAgent: Bool {
+        !surface.isReadOnly && bridge.isReady && !bridge.isExiting
     }
 
     @ViewBuilder
@@ -357,7 +376,7 @@ struct AgentPaneView: View {
     }
 
     private func pickAttachments(mode: AgentAttachmentLoader.Mode) {
-        guard !surface.isReadOnly, bridge.pendingSend == nil else { return }
+        guard !surface.isReadOnly, !bridge.isExiting, bridge.pendingSend == nil else { return }
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
@@ -394,12 +413,12 @@ struct AgentPaneView: View {
     }
 
     private func canPasteAttachment(from pasteboard: NSPasteboard) -> Bool {
-        !surface.isReadOnly && bridge.pendingSend == nil
+        !surface.isReadOnly && !bridge.isExiting && bridge.pendingSend == nil
             && AgentAttachmentLoader.canLoadFromPasteboard(pasteboard)
     }
 
     private func handlePaste(_ pasteboard: NSPasteboard) -> Bool {
-        guard !surface.isReadOnly, bridge.pendingSend == nil else { return false }
+        guard !surface.isReadOnly, !bridge.isExiting, bridge.pendingSend == nil else { return false }
         switch AgentAttachmentLoader.loadFromPasteboard(pasteboard, existing: bridge.draftAttachments) {
         case .notHandled:
             return false
@@ -410,7 +429,7 @@ struct AgentPaneView: View {
     }
 
     private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
-        guard !surface.isReadOnly, bridge.pendingSend == nil else { return false }
+        guard !surface.isReadOnly, !bridge.isExiting, bridge.pendingSend == nil else { return false }
         let matching = providers.filter {
             $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
                 || $0.hasItemConformingToTypeIdentifier(UTType.image.identifier)
@@ -1026,7 +1045,13 @@ private struct AgentTranscript: View {
                                         isStreaming: isWorking && !isWaiting && !hasPendingPermission && entry.id == lastEntry?.id
                                     )
                                 case let .tools(rows):
-                                    AgentToolGroup(rows: rows, appearance: appearance)
+                                    AgentToolGroup(
+                                        rows: rows,
+                                        appearance: appearance,
+                                        maxExpandedHeight: AgentToolGroupLayout.maxListHeight(
+                                            forViewportHeight: viewport.size.height
+                                        )
+                                    )
                                 }
                             }
                             .id(entry.id)
@@ -1286,17 +1311,76 @@ private struct AgentTranscriptScroll<Content: View>: View {
     }
 }
 
+/// Computes height bounds and scroll state for an expanded tool activity list.
+enum AgentToolGroupLayout {
+    static let defaultMaxHeight: CGFloat = 320
+    static let minMaxHeight: CGFloat = 160
+    static let maxMaxHeight: CGFloat = 420
+    static let viewportHeightFraction: CGFloat = 0.5
+    static let scrollerTrailingPadding: CGFloat = 12
+
+    static func maxListHeight(forViewportHeight viewportHeight: CGFloat) -> CGFloat {
+        guard viewportHeight.isFinite, viewportHeight > 0 else {
+            return defaultMaxHeight
+        }
+        return min(maxMaxHeight, max(minMaxHeight, floor(viewportHeight * viewportHeightFraction)))
+    }
+
+    static func isScrollable(contentHeight: CGFloat, maxHeight: CGFloat) -> Bool {
+        guard contentHeight.isFinite, maxHeight.isFinite, contentHeight > 0, maxHeight > 0 else {
+            return false
+        }
+        return ceil(contentHeight) > maxHeight
+    }
+
+    static func resolvedListHeight(contentHeight: CGFloat, maxHeight: CGFloat) -> CGFloat? {
+        guard contentHeight.isFinite, maxHeight.isFinite, contentHeight > 0, maxHeight > 0 else {
+            return nil
+        }
+        return min(ceil(contentHeight), maxHeight)
+    }
+}
+
 private struct AgentToolGroup: View {
     let rows: [AgentBridge.Row]
     let appearance: AgentAppearance
+    let maxExpandedHeight: CGFloat
+
+    @State private var contentHeight: CGFloat = 0
 
     var body: some View {
+        let isScrollable = AgentToolGroupLayout.isScrollable(
+            contentHeight: contentHeight,
+            maxHeight: maxExpandedHeight
+        )
+        let listHeight = AgentToolGroupLayout.resolvedListHeight(
+            contentHeight: contentHeight,
+            maxHeight: maxExpandedHeight
+        )
+
         DisclosureGroup {
-            VStack(alignment: .leading, spacing: 8) {
-                ForEach(rows) { row in
-                    tool(row)
+            ScrollView(.vertical) {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(rows) { row in
+                        tool(row)
+                    }
+                }
+                .padding(.trailing, isScrollable ? AgentToolGroupLayout.scrollerTrailingPadding : 0)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .onGeometryChange(for: CGFloat.self) { proxy in
+                    proxy.size.height
+                } action: { height in
+                    let rounded = ceil(height)
+                    if abs(contentHeight - rounded) > 0.5 {
+                        contentHeight = rounded
+                    }
                 }
             }
+            .scrollIndicators(isScrollable ? .visible : .hidden)
+            .scrollDisabled(!isScrollable)
+            .scrollBounceBehavior(.basedOnSize)
+            .frame(height: listHeight)
+            .frame(maxHeight: maxExpandedHeight)
             .padding(.top, 8)
             .padding(.leading, 8)
         } label: {

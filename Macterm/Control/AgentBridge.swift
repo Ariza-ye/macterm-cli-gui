@@ -210,6 +210,7 @@ final class AgentBridge {
     private(set) var newConversationRejected = false
     private(set) var pendingPermissionID: String?
     private(set) var permissionRejected = false
+    private(set) var isExiting = false
     var draft = ""
     var draftAttachments: [AgentAttachment] = []
     private(set) var attachmentError: AgentAttachmentError?
@@ -262,6 +263,7 @@ final class AgentBridge {
     private var newConversationTimeout: Task<Void, Never>?
     private var pendingPermissionRequest: (id: UUID, permissionID: String)?
     private var permissionTimeout: Task<Void, Never>?
+    private var exitTimeout: Task<Void, Never>?
     private var onClose: (() -> Void)?
     private static let maxFrameBytes = 24 * 1024 * 1024
 
@@ -336,10 +338,12 @@ final class AgentBridge {
         pendingPermissionRequest = nil
         pendingPermissionID = nil
         permissionRejected = false
+        isExiting = false
         requestTimeout?.cancel()
         configTimeout?.cancel()
         newConversationTimeout?.cancel()
         permissionTimeout?.cancel()
+        exitTimeout?.cancel()
         connection.cancel()
         onClose?()
         onClose = nil
@@ -477,8 +481,20 @@ final class AgentBridge {
         send(Command(type: "stop"))
     }
 
+    func exit(from surface: PaneSurface) {
+        guard canSend(from: surface) else { return }
+        isExiting = true
+        send(Command(type: "exit"))
+        exitTimeout?.cancel()
+        exitTimeout = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1.5))
+            guard !Task.isCancelled, let self, !isClosed else { return }
+            close()
+        }
+    }
+
     private func canSend(from surface: PaneSurface) -> Bool {
-        guard !surface.isDestroyed, !surface.isReadOnly, registry.bridge(for: surface.pane) === self,
+        guard !isExiting, !surface.isDestroyed, !surface.isReadOnly, registry.bridge(for: surface.pane) === self,
               let windowID = surface.windowID
         else { return false }
         return showsGUI(in: windowID)

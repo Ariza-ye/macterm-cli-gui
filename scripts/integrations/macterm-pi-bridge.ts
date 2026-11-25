@@ -508,6 +508,10 @@ function startBridge(
                     snapshot();
                 } else if (command.type === "stop") {
                     if (!ctx.isIdle()) ctx.abort();
+                } else if (command.type === "exit") {
+                    close();
+                    if (!ctx.isIdle()) ctx.abort();
+                    ctx.shutdown();
                 } else if (command.type === "setConfig" && typeof command.id === "string") {
                     const replyConfig = (accepted: boolean) => {
                         if (peer === socket) {

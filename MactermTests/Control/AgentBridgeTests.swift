@@ -1116,6 +1116,64 @@ struct AgentBridgeTests {
         #expect(bridge.showsGUI(in: windowID))
     }
 
+    @Test
+    func bridge_exit_sends_exit_command_and_closes_when_peer_disconnects() async throws {
+        let (_, registry, appState, projectStore) = makeHandler()
+        let pane = try seedPane(appState, projectStore)
+        let windowID = UUID()
+        let surface = SurfaceRegistry.shared.surface(for: pane, in: .window(windowID))
+        defer {
+            registry.disconnect(pane: pane)
+            SurfaceRegistry.shared.destroySurfaces(of: pane)
+        }
+
+        let (socketPath, serverFD, cleanup) = try makeListeningBridgeSocket(prefix: "agent")
+        defer { cleanup() }
+
+        let bridge = AgentBridge(
+            provider: .antigravity,
+            path: socketPath,
+            conversation: "conv-exit",
+            token: UUID(),
+            windowID: windowID,
+            registry: registry
+        )
+        registry.bind(bridge, toSession: pane.sessionName)
+
+        let peerFD = try await acceptClient(on: serverFD)
+        var peerClosed = false
+        defer {
+            if !peerClosed { close(peerFD) }
+        }
+        _ = try await readLine(from: peerFD) // hello
+
+        try writeFrame(["type": "snapshot", "conversation": "conv-exit"], to: peerFD)
+        try writeFrame(["type": "snapshotEnd", "busy": true, "waiting": false], to: peerFD)
+        try await waitUntil { bridge.isReady && bridge.isBusy }
+
+        // Read-only surface ignores exit requests.
+        surface.isReadOnly = true
+        bridge.exit(from: surface)
+        #expect(!bridge.isExiting)
+        surface.isReadOnly = false
+
+        // Writable surface sends exit even while busy and blocks duplicate sends.
+        bridge.exit(from: surface)
+        #expect(bridge.isExiting)
+        bridge.draft = "Ignored while exiting"
+        bridge.submit(from: surface)
+        #expect(bridge.pendingSend == nil)
+
+        let exitLine = try await readLine(from: peerFD)
+        let exitCmd = try #require(JSONSerialization.jsonObject(with: Data(exitLine.utf8)) as? [String: Any])
+        #expect(exitCmd["type"] as? String == "exit")
+
+        // Closing the peer socket finishes teardown and detaches the bridge from the pane.
+        close(peerFD)
+        peerClosed = true
+        try await waitUntil { registry.bridge(for: pane) == nil && !bridge.isReady && !bridge.isExiting }
+    }
+
     private func makeListeningBridgeSocket(prefix: String) throws -> (String, Int32, () -> Void) {
         let token = String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(6))
         let directory = "/tmp/macterm-\(prefix)-\(token)"

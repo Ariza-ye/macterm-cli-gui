@@ -14,6 +14,7 @@ final class AgentPaneOverlayController {
     let focus = AgentPaneFocus()
     private weak var displayedAgent: AgentBridge?
     private var overlay: NSHostingView<AgentPaneView>?
+    private var forceFocusRestore = false
 
     func reattach(in host: NSView, above scroll: SurfaceScrollView) {
         if let overlay, host.subviews.last !== overlay {
@@ -41,8 +42,10 @@ final class AgentPaneOverlayController {
             let responder = host.window?.firstResponder as? NSView
             let focusedOverlay = overlay.map { responder?.isDescendant(of: $0) == true } ?? false
             let opensFromTerminal = agent != nil && (responder == nil || responder is GhosttyTerminalNSView)
+            let forcedFocusRestore = forceFocusRestore
+            forceFocusRestore = false
             let restoresFocus = configuration.focused && host.window?.isKeyWindow == true
-                && (responder === terminal || focusedOverlay || opensFromTerminal)
+                && (forcedFocusRestore || responder === terminal || focusedOverlay || opensFromTerminal)
             overlay?.removeFromSuperview()
             overlay = nil
             displayedAgent = agent
@@ -52,9 +55,16 @@ final class AgentPaneOverlayController {
                     bridge: agent,
                     surface: surface,
                     focus: focus,
-                    showTerminal: { [weak agent] in
+                    showTerminal: { [weak self, weak agent] in
+                        self?.forceFocusRestore = true
                         onFocus()
                         agent?.setGUIVisible(false, in: windowID)
+                    },
+                    closeAgent: { [weak self, weak agent, weak surface] in
+                        self?.forceFocusRestore = true
+                        onFocus()
+                        guard let surface else { return }
+                        agent?.exit(from: surface)
                     }
                 ))
                 hosting.frame = host.bounds

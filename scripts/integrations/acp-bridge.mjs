@@ -800,8 +800,10 @@ export async function runAcpBridge(config, runtime = {}) {
         try {
             await request("session/prompt", { sessionId: sessionID, prompt: promptBlocks });
         } catch (error) {
-            upsert({ id: randomUUID(), kind: "assistant", text: clean(error.message) });
-            writeErr(`\n${clean(error.message)}\n`);
+            if (!closed) {
+                upsert({ id: randomUUID(), kind: "assistant", text: clean(error.message) });
+                writeErr(`\n${clean(error.message)}\n`);
+            }
         } finally {
             turn = undefined;
             status();
@@ -858,7 +860,7 @@ export async function runAcpBridge(config, runtime = {}) {
             }
             reply(true);
         } catch (error) {
-            writeErr(`\n${clean(error.message)}\n`);
+            if (!closed) writeErr(`\n${clean(error.message)}\n`);
             reply(false);
         } finally {
             configPending = false;
@@ -903,7 +905,7 @@ export async function runAcpBridge(config, runtime = {}) {
                 emit({ type: "snapshotEnd", ...state(), configOptions });
             }
         } catch (error) {
-            writeErr(`\n${clean(error.message)}\n`);
+            if (!closed) writeErr(`\n${clean(error.message)}\n`);
             reply(false);
         } finally {
             newConversationPending = false;
@@ -968,6 +970,8 @@ export async function runAcpBridge(config, runtime = {}) {
                 resolvePermission(command.permissionId, command.optionId, socket, command.id);
             } else if (command?.type === "stop") {
                 stop();
+            } else if (command?.type === "exit") {
+                exitFromGUI();
             }
         });
     });
@@ -1021,6 +1025,13 @@ export async function runAcpBridge(config, runtime = {}) {
     const retry = setInterval(register, 2000).unref();
     const startup = setTimeout(() => fail(new Error(`${config.name} did not start in time.`)), startupTimeoutMs).unref();
 
+    function exitFromGUI() {
+        if (closed) return;
+        if (turn || permissions.size) stop();
+        writeOut("\n");
+        close();
+    }
+
     function close() {
         if (closed) return;
         closed = true;
@@ -1033,6 +1044,13 @@ export async function runAcpBridge(config, runtime = {}) {
         agentOutput.close();
         agent.stdin.destroy();
         agent.kill();
+        if (agent.exitCode === null && agent.signalCode === null) {
+            setTimeout(() => {
+                if (agent.exitCode === null && agent.signalCode === null) {
+                    try { agent.kill("SIGKILL"); } catch {}
+                }
+            }, 2000).unref();
+        }
         for (const { reject } of inflight.values()) reject(new Error(`The ${config.name} connection closed.`));
         inflight.clear();
         try { unlinkSync(path); } catch {}

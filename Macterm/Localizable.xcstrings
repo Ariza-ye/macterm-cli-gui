@@ -2780,6 +2780,38 @@
         }
       }
     },
+    "Close Agent" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "에이전트 닫기"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "关闭智能体"
+          }
+        }
+      }
+    },
+    "Close Agent GUI and exit the agent CLI" : {
+      "localizations" : {
+        "ko" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Agent GUI를 닫고 에이전트 CLI를 종료합니다"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "关闭 Agent GUI 并退出智能体 CLI"
+          }
+        }
+      }
+    },
     "Close Pane" : {
       "localizations" : {
         "ko" : {
