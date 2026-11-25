@@ -21,6 +21,12 @@
 </p>
 
 <p align="center">
+  <b>English</b> ·
+  <a href="README.zh-CN.md">简体中文</a> ·
+  <a href="README.ko.md">한국어</a>
+</p>
+
+<p align="center">
   <a href="https://github.com/Ariza-ye/macterm-cli-gui/releases"><b>Releases</b></a> ·
   <a href="scripts/integrations/README.md"><b>Agent GUI Guide</b></a> ·
   <a href="https://github.com/macterm/macterm"><b>Upstream Macterm</b></a> ·
